@@ -8,10 +8,10 @@ interface RecentFile {
   title: string
 }
 
-const store = new Store<{
+let store: Store<{
   windowBounds: { x: number; y: number; width: number; height: number }
   recentFiles: RecentFile[]
-}>()
+}>
 
 process.env.DIST_ELECTRON = join(__dirname, '..')
 process.env.DIST = join(process.env.DIST_ELECTRON, '../renderer')
@@ -22,8 +22,22 @@ const preload = join(__dirname, '../preload/index.js')
 const url = process.env.ELECTRON_RENDERER_URL || ''
 const indexHtml = join(process.env.DIST, 'index.html')
 
+function initStore() {
+  try {
+    store = new Store<{
+      windowBounds: { x: number; y: number; width: number; height: number }
+      recentFiles: RecentFile[]
+    }>()
+    console.log('[Main] electron-store initialized successfully')
+  } catch (err) {
+    console.error('[Main] Failed to initialize electron-store:', err)
+    store = null as any
+  }
+}
+
 async function createWindow() {
-  const savedBounds = store.get('windowBounds')
+  initStore()
+  const savedBounds = store?.get('windowBounds')
 
   win = new BrowserWindow({
     title: 'Markdown Editor',
@@ -44,26 +58,65 @@ async function createWindow() {
   })
 
   if (url) {
-    win.loadURL(url)
+    console.log('[Main] Loading dev URL:', url)
+    win.loadURL(url).catch((err) => {
+      console.error('[Main] Failed to load dev URL:', err)
+    })
     win.webContents.openDevTools()
   } else {
+    console.log('[Main] Loading local file:', indexHtml)
     win.loadFile(indexHtml)
   }
+
+  win.webContents.on('did-finish-load', () => {
+    console.log('[Main] Window finished loading')
+  })
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[Main] Page load failed:', errorCode, errorDescription)
+  })
+
+  win.webContents.on('console-message', (_event, level, message, sourceId, lineNo) => {
+    const levelMap = ['VERBOSE', 'INFO', 'WARNING', 'ERROR']
+    const levelStr = levelMap[level] || 'LOG'
+    console.log(`[Renderer ${levelStr}] ${message} (${sourceId}:${lineNo})`)
+  })
+
+  win.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error('[Main] Preload script error:', preloadPath, error)
+  })
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Main] Render process gone:', details.reason)
+  })
 
   win.on('closed', () => {
     win = null
   })
 
   win.on('move', () => {
-    if (win) store.set('windowBounds', win.getBounds())
+    if (win && store) store.set('windowBounds', win.getBounds())
   })
 
   win.on('resize', () => {
-    if (win) store.set('windowBounds', win.getBounds())
+    if (win && store) store.set('windowBounds', win.getBounds())
   })
 }
 
-app.whenReady().then(createWindow)
+process.on('uncaughtException', (error) => {
+  console.error('[Main Process] Uncaught exception:', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Main Process] Unhandled rejection:', reason)
+})
+
+app.whenReady().then(() => {
+  createWindow().catch((err) => {
+    console.error('[Main Process] Failed to create window:', err)
+    app.quit()
+  })
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -79,12 +132,19 @@ app.on('activate', () => {
 })
 
 ipcMain.handle('get-config', () => {
+  if (!store) return {}
   return store.store
 })
 
 ipcMain.handle('set-config', (_event, key: string, value: unknown) => {
-  store.set(key, value)
-  return true
+  if (!store) return false
+  try {
+    store.set(key, value)
+    return true
+  } catch (err) {
+    console.error('[Main] set-config failed:', err)
+    return false
+  }
 })
 
 ipcMain.handle('new-file', () => {
@@ -127,10 +187,12 @@ ipcMain.handle('save-file-as', async (_event, content: string) => {
 })
 
 ipcMain.handle('get-recent-files', () => {
+  if (!store) return []
   return store.get('recentFiles', [])
 })
 
 ipcMain.handle('add-to-recent-files', (_event, path: string, title: string) => {
+  if (!store) return false
   const recentFiles = store.get('recentFiles', []) as RecentFile[]
   const filtered = recentFiles.filter((f) => f.path !== path)
   filtered.unshift({ path, title })
@@ -139,6 +201,7 @@ ipcMain.handle('add-to-recent-files', (_event, path: string, title: string) => {
 })
 
 ipcMain.handle('clear-recent-files', () => {
+  if (!store) return false
   store.set('recentFiles', [])
   return true
 })

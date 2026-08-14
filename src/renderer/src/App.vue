@@ -236,9 +236,15 @@ function retryApp() {
 }
 
 async function initApp() {
-  try {
-    themeStore.initTheme()
-    store.loadRecentFiles()
+  // 立即结束 loading，显示 UI
+  isLoading.value = false
+  removeInitialLoading()
+
+  // 后台异步初始化（不阻塞 UI）
+  Promise.allSettled([
+    themeStore.initTheme().catch((e) => console.warn('[App] Theme init failed:', e)),
+    store.loadRecentFiles().catch((e) => console.warn('[App] Recent files init failed:', e))
+  ]).then(() => {
     if (documents.value.length === 0) {
       handleNew()
     } else {
@@ -246,11 +252,7 @@ async function initApp() {
       store.addTab(firstDoc.id, firstDoc.title)
       store.setActiveTab(firstDoc.id)
     }
-    isLoading.value = false
-    removeInitialLoading()
-  } catch (e) {
-    handleError(e)
-  }
+  })
 }
 
 async function toggleMaximize() {
@@ -262,6 +264,8 @@ function handleNew() {
   const id = store.addDocument('无标题文档', '')
   store.addTab(id, '无标题文档')
   store.setActiveTab(id)
+  // 新建文档没有文件路径
+  store.currentFilePath = null
 }
 
 function handleSelect(id: string) {
@@ -288,12 +292,22 @@ function handleMoveTab(from: number, to: number) {
   store.moveTab(from, to)
 }
 
+function getFileName(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() || filePath
+}
+
 async function handleOpen() {
   const result = await store.openFileDialog()
   if (result) {
-    const title =
-      result.content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 50) || '无标题文档'
-    const id = store.addDocument(title, result.content)
+    // 检查文件是否已打开
+    const existingDoc = store.getDocumentByPath(result.path)
+    if (existingDoc) {
+      store.setActiveTab(existingDoc.id)
+      return
+    }
+    // 使用文件名作为标题
+    const title = getFileName(result.path)
+    const id = store.addDocument(title, result.content, result.path)
     store.addTab(id, title)
     store.setActiveTab(id)
   }
@@ -312,11 +326,17 @@ async function handleSaveAs() {
 }
 
 async function handleOpenRecent(path: string) {
+  // 检查文件是否已打开
+  const existingDoc = store.getDocumentByPath(path)
+  if (existingDoc) {
+    store.setActiveTab(existingDoc.id)
+    return
+  }
   const result = await store.openFilePath(path)
   if (result) {
-    const title =
-      result.content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 50) || '无标题文档'
-    const id = store.addDocument(title, result.content)
+    // 使用文件名作为标题
+    const title = getFileName(result.path)
+    const id = store.addDocument(title, result.content, result.path)
     store.addTab(id, title)
     store.setActiveTab(id)
   }

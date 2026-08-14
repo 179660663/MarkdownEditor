@@ -2,7 +2,6 @@
   <div
     class="typora-editor"
     ref="editorContainer"
-    @click.self="onContainerClick"
   >
     <!-- 预览层（渲染后的 HTML） -->
     <div
@@ -10,7 +9,7 @@
       class="editor-overlay"
       ref="overlay"
       v-html="renderedContent"
-      @click="onPreviewClick"
+      @dblclick="onPreviewClick"
     ></div>
 
     <!-- 源码编辑层（带格式化样式的 Markdown 文本） -->
@@ -37,6 +36,36 @@
       ref="syncOverlay"
       v-html="renderedContent"
     ></div>
+
+    <!-- 模式切换按钮 -->
+    <div class="mode-switch">
+      <button
+        class="mode-btn"
+        :class="{ active: mode === 'preview' }"
+        title="预览模式 (Ctrl+Shift+E)"
+        @click.stop="switchToPreview"
+      >
+        <span class="mode-icon">👁</span>
+        <span class="mode-label">预览</span>
+      </button>
+      <button
+        class="mode-btn"
+        :class="{ active: mode === 'edit' }"
+        title="编辑模式 (Ctrl+Shift+E)"
+        @click.stop="switchToEdit"
+      >
+        <span class="mode-icon">✏️</span>
+        <span class="mode-label">编辑</span>
+      </button>
+      <button
+        class="mode-lock-btn"
+        :class="{ locked: modeLocked }"
+        :title="modeLocked ? '已锁定模式（点击解锁）' : '锁定模式（防止自动切换）'"
+        @click.stop="toggleLock"
+      >
+        <span class="lock-icon">{{ modeLocked ? '🔒' : '🔓' }}</span>
+      </button>
+    </div>
   </div>
 </template>
 
@@ -70,6 +99,8 @@ const renderedContent = ref('')
 
 // 编辑模式：edit(显示 Markdown 源码) / preview(显示渲染预览)
 const mode = ref<'edit' | 'preview'>('preview')
+// 用户手动锁定模式时，不自动切换
+const modeLocked = ref(false)
 
 let renderTimer: ReturnType<typeof setTimeout> | null = null
 let idleTimer: ReturnType<typeof setTimeout> | null = null
@@ -97,33 +128,71 @@ function scheduleRender() {
   }, 200)
 }
 
-function enterEditMode() {
+function enterEditMode(silent = false) {
   if (mode.value === 'edit') return
   mode.value = 'edit'
   emit('mode-change', 'edit')
-  nextTick(() => {
-    if (textarea.value) {
-      textarea.value.focus()
-    }
-  })
+  if (!silent) {
+    nextTick(() => {
+      if (textarea.value) {
+        textarea.value.focus()
+      }
+    })
+  }
 }
 
 function enterPreviewMode() {
   if (mode.value === 'preview') return
   mode.value = 'preview'
   emit('mode-change', 'preview')
+  // 清除 textarea 焦点，避免光标残留
+  if (textarea.value) {
+    textarea.value.blur()
+  }
   nextTick(() => {
     if (overlay.value && textarea.value) {
       overlay.value.scrollTop = textarea.value.scrollTop
     }
+    // 切换后立即渲染最新内容
+    renderedContent.value = renderMarkdown(content.value)
   })
+}
+
+function toggleMode() {
+  if (mode.value === 'edit') {
+    enterPreviewMode()
+  } else {
+    enterEditMode()
+  }
+}
+
+function switchToPreview() {
+  setLockMode(true)
+  enterPreviewMode()
+}
+
+function switchToEdit() {
+  setLockMode(true)
+  enterEditMode()
+}
+
+function toggleLock() {
+  setLockMode(!modeLocked.value)
+}
+
+function setLockMode(locked: boolean) {
+  modeLocked.value = locked
+  if (locked) {
+    // 锁定时清除自动切换计时器
+    if (idleTimer) clearTimeout(idleTimer)
+  }
 }
 
 function resetIdleTimer() {
   if (idleTimer) clearTimeout(idleTimer)
   idleTimer = setTimeout(() => {
-    // 停止输入 800ms 后切换回预览模式
-    if (!isTextareaFocused) {
+    // 如果用户锁定了模式，不自动切换
+    if (!modeLocked.value) {
       enterPreviewMode()
     }
   }, 800)
@@ -141,13 +210,90 @@ function onTextareaBlur() {
   emit('blur-toolbar')
 }
 
-function onContainerClick() {
-  enterEditMode()
-}
-
 function onPreviewClick(e: MouseEvent) {
   e.stopPropagation()
-  enterEditMode()
+  
+  const target = e.target as HTMLElement
+  const previewLayer = overlay.value
+  
+  if (previewLayer && target) {
+    // 优先使用 data-line 属性精确定位
+    const clickedElement = target.closest('[data-line]') as HTMLElement | null
+    let targetLine = 0
+    
+    if (clickedElement && clickedElement.hasAttribute('data-line')) {
+      // 使用 data-line 属性获取精确行号
+      targetLine = parseInt(clickedElement.getAttribute('data-line') || '0', 10)
+      
+      // 根据点击位置在元素内的相对位置微调行号
+      const clickY = e.clientY
+      const rect = clickedElement.getBoundingClientRect()
+      const elementHeight = rect.height
+      const relativeY = elementHeight > 0 ? (clickY - rect.top) / elementHeight : 0
+      
+      // 如果点击在元素下半部分，可能需要向下偏移
+      const contentLines = content.value.split('\n').length
+      const elementApproxLines = Math.max(1, Math.ceil(elementHeight / 24))
+      const lineOffset = Math.floor(relativeY * elementApproxLines)
+      
+      targetLine = Math.min(targetLine + lineOffset, contentLines - 1)
+    } else {
+      // 回退方案：使用位置比例估算
+      const clickY = e.clientY
+      const previewRect = previewLayer.getBoundingClientRect()
+      const scrollTop = previewLayer.scrollTop
+      const totalHeight = previewLayer.scrollHeight
+      
+      const clickRatio = totalHeight > 0 
+        ? (clickY - previewRect.top + scrollTop) / totalHeight 
+        : 0
+      
+      const totalLines = content.value.split('\n').length
+      targetLine = Math.floor(clickRatio * totalLines)
+    }
+    
+    // 确保行号在有效范围内
+    const totalLines = content.value.split('\n').length
+    targetLine = Math.max(0, Math.min(targetLine, totalLines - 1))
+    
+    // 切换到编辑模式
+    mode.value = 'edit'
+    emit('mode-change', 'edit')
+    
+    // 使用 setTimeout 确保 DOM 完全渲染后再定位光标
+    setTimeout(() => {
+      if (textarea.value) {
+        positionCursorToLine(targetLine)
+      }
+    }, 30)
+  } else {
+    enterEditMode()
+  }
+}
+
+function positionCursorToLine(lineNumber: number) {
+  if (!textarea.value) return
+  
+  const ta = textarea.value
+  const lines = ta.value.split('\n')
+  
+  // 计算目标行在文本中的位置
+  let charOffset = 0
+  for (let i = 0; i < lineNumber && i < lines.length; i++) {
+    charOffset += lines[i].length + 1 // +1 for newline
+  }
+  
+  // 聚焦并将光标定位到目标行的开头
+  ta.focus()
+  requestAnimationFrame(() => {
+    ta.selectionStart = charOffset
+    ta.selectionEnd = charOffset
+    
+    // 滚动到目标位置
+    const lineHeight = 24 // 估算行高
+    const targetScrollTop = Math.max(0, lineNumber * lineHeight - ta.clientHeight / 3)
+    ta.scrollTop = targetScrollTop
+  })
 }
 
 function handleInput() {
@@ -552,16 +698,33 @@ watch(
   }
 )
 
+function handleGlobalKeydown(e: KeyboardEvent) {
+  // Ctrl+Shift+E 切换模式
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+    e.preventDefault()
+    toggleMode()
+  }
+  // Ctrl+Shift+L 锁定/解锁模式
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
+    e.preventDefault()
+    toggleLock()
+  }
+}
+
 onMounted(() => {
   renderedContent.value = renderMarkdown(content.value)
   // 初始显示预览模式
   mode.value = 'preview'
+  // 添加全局快捷键监听
+  window.addEventListener('keydown', handleGlobalKeydown)
 })
 
 onBeforeUnmount(() => {
   if (renderTimer) clearTimeout(renderTimer)
   if (idleTimer) clearTimeout(idleTimer)
   if (typingTimer) clearTimeout(typingTimer)
+  // 移除全局快捷键监听
+  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
 defineExpose({
@@ -598,9 +761,15 @@ defineExpose({
   insertImages,
   getMode: () => mode.value,
   setMode: (m: 'edit' | 'preview') => {
-    mode.value = m
-    emit('mode-change', m)
+    if (m === 'edit') {
+      enterEditMode()
+    } else {
+      enterPreviewMode()
+    }
   },
+  toggleMode,
+  setLockMode,
+  isModeLocked: () => modeLocked.value,
   syncFromTextarea: () => {
     if (!textarea.value) return
     content.value = textarea.value.value
@@ -835,5 +1004,85 @@ defineExpose({
 
 .editor-textarea::selection {
   background: var(--selection);
+}
+
+/* 模式切换按钮 */
+.mode-switch {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.mode-switch:hover {
+  opacity: 1;
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.mode-btn:hover {
+  background: var(--hover-bg);
+  color: var(--editor-text);
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.mode-icon {
+  font-size: 14px;
+}
+
+.mode-label {
+  font-weight: 500;
+}
+
+.mode-lock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-lock-btn:hover {
+  background: var(--hover-bg);
+}
+
+.mode-lock-btn.locked {
+  color: var(--accent);
+}
+
+.lock-icon {
+  font-size: 14px;
 }
 </style>

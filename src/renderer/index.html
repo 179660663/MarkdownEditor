@@ -54,6 +54,31 @@
       </div>
     </div>
     <div id="app"></div>
+    <script>
+      (function() {
+        var loading = document.getElementById('initial-loading');
+        var app = document.getElementById('app');
+
+        function showFail(msg) {
+          if (!loading) return;
+          loading.innerHTML = '<div style="text-align:center;padding:20px;"><h2 style="color:#f44747;margin-bottom:16px;">加载失败</h2><p style="color:#d4d4d4;margin-bottom:20px;font-size:13px;font-family:monospace;word-break:break-all;">' + msg + '</p><button onclick="location.reload()" style="background:#569cd6;color:white;border:none;padding:8px 24px;border-radius:4px;cursor:pointer;font-size:14px;">重新加载</button></div>';
+        }
+
+        window.addEventListener('error', function(e) {
+          console.error('[HTML Error]', e.message, 'at', e.filename, e.lineno);
+          if (e.filename && (e.filename.indexOf('main') !== -1 || e.filename.indexOf('.ts') !== -1)) {
+            showFail('脚本加载失败: ' + e.message);
+          }
+        });
+
+        var loadTimeout = setTimeout(function() {
+          if (app && app.children.length === 0) {
+            var hasAPI = !!(window.electronAPI);
+            showFail('应用初始化超时。<br>electronAPI: ' + (hasAPI ? '可用' : '不可用') + '<br>请查看 DevTools Console。');
+          }
+        }, 15000);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

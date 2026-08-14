@@ -6,6 +6,7 @@ interface Doc {
   title: string
   content: string
   updatedAt: number
+  filePath?: string
 }
 
 interface RecentFile {
@@ -24,6 +25,8 @@ export const useEditorStore = defineStore('editor', () => {
   const currentFilePath = ref<string | null>(null)
   const recentFiles = ref<RecentFile[]>([])
   const isDirty = ref(false)
+  // 标记正在加载/切换文件，此时 updateDocument 不应将 isDirty 设为 true
+  const isLoading = ref(false)
 
   const tabs = ref<Tab[]>([])
   const activeTabId = ref<string | null>(null)
@@ -32,15 +35,20 @@ export const useEditorStore = defineStore('editor', () => {
     return filePath.split(/[\\/]/).pop() || filePath
   }
 
-  function addDocument(title: string, content: string): string {
+  function addDocument(title: string, content: string, filePath?: string): string {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     documents.value.push({
       id,
       title,
       content,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      filePath
     })
     return id
+  }
+
+  function getDocumentByPath(filePath: string): Doc | undefined {
+    return documents.value.find((d) => d.filePath === filePath)
   }
 
   function getDocument(id: string): Doc | undefined {
@@ -52,12 +60,17 @@ export const useEditorStore = defineStore('editor', () => {
     if (doc) {
       doc.content = content
       doc.updatedAt = Date.now()
-      if (content.trim()) {
+      // 如果没有文件路径（新建文档），根据内容更新标题
+      if (!doc.filePath && content.trim()) {
         doc.title = content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 50) || '无标题文档'
       }
-      isDirty.value = true
-      updateTabDirty(id, true)
-      updateTabTitle(id, doc.title)
+      // 如果有文件路径，title 保持为文件名，不被内容覆盖
+      // 加载/切换文件时不设置 dirty 标记
+      if (!isLoading.value) {
+        isDirty.value = true
+        updateTabDirty(id, true)
+        updateTabTitle(id, doc.title)
+      }
     }
   }
 
@@ -116,8 +129,17 @@ export const useEditorStore = defineStore('editor', () => {
     activeTabId.value = id
     const doc = getDocument(id)
     if (doc) {
-      currentFilePath.value = null
+      // 切换到文档时，同步更新当前文件路径
+      currentFilePath.value = doc.filePath || null
+      // 标记正在加载，防止 updateDocument 错误地设置 dirty 标记
+      isLoading.value = true
       isDirty.value = false
+      // 清除标签的 dirty 状态
+      updateTabDirty(id, false)
+      // 稍后清除 isLoading 标记
+      setTimeout(() => {
+        isLoading.value = false
+      }, 100)
     }
   }
 
@@ -154,8 +176,11 @@ export const useEditorStore = defineStore('editor', () => {
     const result = await window.electronAPI.openFile()
     if (result) {
       currentFilePath.value = result.path
+      // 标记正在加载，防止后续 updateDocument 错误设置 dirty
+      isLoading.value = true
       isDirty.value = false
-      await addRecentFile(result.path, getFileName(result.path))
+      const fileName = getFileName(result.path)
+      await addRecentFile(result.path, fileName)
     }
     return result
   }
@@ -164,8 +189,11 @@ export const useEditorStore = defineStore('editor', () => {
     const result = await window.electronAPI.readFile(path)
     if (result) {
       currentFilePath.value = result.path
+      // 标记正在加载，防止后续 updateDocument 错误设置 dirty
+      isLoading.value = true
       isDirty.value = false
-      await addRecentFile(result.path, getFileName(result.path))
+      const fileName = getFileName(result.path)
+      await addRecentFile(result.path, fileName)
     }
     return result
   }
@@ -176,6 +204,11 @@ export const useEditorStore = defineStore('editor', () => {
       if (ok) {
         isDirty.value = false
         if (activeTabId.value) {
+          // 更新文档的文件路径
+          const doc = documents.value.find((d) => d.id === activeTabId.value)
+          if (doc) {
+            doc.filePath = currentFilePath.value
+          }
           markTabClean(activeTabId.value)
         }
       }
@@ -190,6 +223,11 @@ export const useEditorStore = defineStore('editor', () => {
       currentFilePath.value = path
       isDirty.value = false
       if (activeTabId.value) {
+        // 更新文档的文件路径
+        const doc = documents.value.find((d) => d.id === activeTabId.value)
+        if (doc) {
+          doc.filePath = path
+        }
         markTabClean(activeTabId.value)
       }
       await addRecentFile(path, getFileName(path))
@@ -227,6 +265,7 @@ export const useEditorStore = defineStore('editor', () => {
     activeTabId,
     addDocument,
     getDocument,
+    getDocumentByPath,
     updateDocument,
     deleteDocument,
     addTab,

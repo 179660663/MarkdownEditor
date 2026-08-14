@@ -97,6 +97,18 @@
       <div class="toolbar-divider"></div>
 
       <div class="toolbar-group">
+        <button
+          class="tb-btn"
+          title="切换编辑/预览模式 (Ctrl+Shift+E)"
+          @click="toggleEditMode"
+        >
+          <span class="tb-icon">🔄</span>
+        </button>
+      </div>
+
+      <div class="toolbar-divider"></div>
+
+      <div class="toolbar-group">
         <div class="export-dropdown">
           <button class="tb-btn" title="导出">
             <span class="tb-icon">📤</span>
@@ -175,7 +187,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 const EDITOR_TOP_THRESHOLD = 60
-const AUTO_HIDE_DELAY = 2000
+const AUTO_HIDE_DELAY = 2*1000 // 单位：毫秒
 
 const toolbarStyle = computed(() => {
   if (!props.editorRef?.value) return {}
@@ -244,6 +256,14 @@ function ensureEditMode() {
     api.setMode('edit')
   }
   return api
+}
+
+function toggleEditMode() {
+  const api = getEditorAPI()
+  if (!api) return
+  if (api.toggleMode) {
+    api.toggleMode()
+  }
 }
 
 function action(type: string) {

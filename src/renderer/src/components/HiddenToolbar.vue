@@ -58,7 +58,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 
 const TOP_REGION_HEIGHT = 40
-const AUTO_HIDE_DELAY = 800
+const AUTO_HIDE_DELAY = 800 // 单位：毫秒
 
 function handleMouseMove(e: MouseEvent) {
   if (e.clientY <= TOP_REGION_HEIGHT) {
