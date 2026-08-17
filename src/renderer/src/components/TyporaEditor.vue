@@ -10,6 +10,8 @@
       ref="overlay"
       v-html="renderedContent"
       @dblclick="onPreviewClick"
+      @click="onPreviewMouseClick"
+      @mousedown.prevent="onPreviewMouseDown"
     ></div>
 
     <!-- 源码编辑层（带格式化样式的 Markdown 文本） -->
@@ -76,6 +78,7 @@ import { useToolbar } from '../composables/useToolbar'
 
 const props = defineProps<{
   modelValue: string
+  editorMode: 'edit' | 'preview'
 }>()
 
 const emit = defineEmits<{
@@ -97,15 +100,25 @@ const textarea = ref<HTMLTextAreaElement | null>(null)
 const content = ref(props.modelValue)
 const renderedContent = ref('')
 
-// 编辑模式：edit(显示 Markdown 源码) / preview(显示渲染预览)
-const mode = ref<'edit' | 'preview'>('preview')
+const mode = ref<'edit' | 'preview'>(props.editorMode)
 // 用户手动锁定模式时，不自动切换
 const modeLocked = ref(false)
 
 let renderTimer: ReturnType<typeof setTimeout> | null = null
-let idleTimer: ReturnType<typeof setTimeout> | null = null
 let isRapidTyping = false
 let typingTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(() => props.editorMode, (newMode) => {
+  mode.value = newMode
+  if (newMode === 'edit') {
+    nextTick(() => {
+      if (textarea.value) textarea.value.focus()
+    })
+  } else {
+    if (textarea.value) textarea.value.blur()
+    renderedContent.value = renderMarkdown(content.value)
+  }
+})
 
 function scheduleRender() {
   if (renderTimer) clearTimeout(renderTimer)
@@ -182,20 +195,6 @@ function toggleLock() {
 
 function setLockMode(locked: boolean) {
   modeLocked.value = locked
-  if (locked) {
-    // 锁定时清除自动切换计时器
-    if (idleTimer) clearTimeout(idleTimer)
-  }
-}
-
-function resetIdleTimer() {
-  if (idleTimer) clearTimeout(idleTimer)
-  idleTimer = setTimeout(() => {
-    // 如果用户锁定了模式，不自动切换
-    if (!modeLocked.value) {
-      enterPreviewMode()
-    }
-  }, 800)
 }
 
 let isTextareaFocused = false
@@ -208,6 +207,80 @@ function onTextareaFocus() {
 function onTextareaBlur() {
   isTextareaFocused = false
   emit('blur-toolbar')
+}
+
+function onPreviewMouseDown(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target) return
+
+  const anchor = target.closest('a') as HTMLAnchorElement | null
+  const href = anchor ? anchor.getAttribute('href') : null
+
+  if (href && href.startsWith('#')) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    return
+  }
+
+  if (href && isExternalUrl(href)) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+      window.electronAPI.openExternal(href)
+      return
+    }
+  } else if (!anchor) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+}
+
+function isExternalUrl(href: string | null): href is string {
+  if (!href) return false
+  if (href.startsWith('#')) return false
+  return /^https?:\/\//i.test(href) || /^mailto:/i.test(href) || /^file:\/\//i.test(href)
+}
+
+function onPreviewMouseClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target) return
+
+  const anchor = target.closest('a') as HTMLAnchorElement | null
+  if (!anchor) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    return
+  }
+
+  const href = anchor.getAttribute('href')
+  if (!href) return
+
+  if (href.startsWith('#')) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    return
+  }
+
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+    e.preventDefault()
+    e.stopPropagation()
+    window.electronAPI.openExternal(href)
+    return
+  }
+
+  if (isExternalUrl(href)) {
+    e.preventDefault()
+    e.stopPropagation()
+    window.electronAPI.openExternal(href)
+  }
 }
 
 function onPreviewClick(e: MouseEvent) {
@@ -296,15 +369,49 @@ function positionCursorToLine(lineNumber: number) {
   })
 }
 
+function jumpToLine(lineNumber: number) {
+  if (mode.value === 'preview') {
+    // 预览模式：滚动预览层到对应位置
+    const previewLayer = overlay.value
+    if (!previewLayer) return
+    
+    // 尝试通过 data-line 属性精确定位
+    const targetElement = previewLayer.querySelector(`[data-line="${lineNumber}"]`) as HTMLElement | null
+    
+    if (targetElement) {
+      // 找到了对应元素，滚动到该元素位置
+      const containerRect = previewLayer.getBoundingClientRect()
+      const elementRect = targetElement.getBoundingClientRect()
+      const elementOffsetTop = elementRect.top - containerRect.top + previewLayer.scrollTop
+      
+      previewLayer.scrollTo({
+        top: Math.max(0, elementOffsetTop - previewLayer.clientHeight / 4),
+        behavior: 'smooth'
+      })
+    } else {
+      // 回退方案：使用比例估算滚动位置
+      const totalLines = content.value.split('\n').length
+      const ratio = totalLines > 0 ? lineNumber / totalLines : 0
+      const targetScrollTop = ratio * previewLayer.scrollHeight
+      
+      previewLayer.scrollTo({
+        top: Math.max(0, targetScrollTop - previewLayer.clientHeight / 4),
+        behavior: 'smooth'
+      })
+    }
+  } else {
+    // 编辑模式：定位光标到对应行
+    positionCursorToLine(lineNumber)
+  }
+}
+
 function handleInput() {
   if (!textarea.value) return
   content.value = textarea.value.value
   emit('update:modelValue', content.value)
-  // 输入时切到编辑模式
   mode.value = 'edit'
   emit('mode-change', 'edit')
   scheduleRender()
-  resetIdleTimer()
 }
 
 function handleTextareaScroll() {
@@ -316,8 +423,6 @@ function handleTextareaScroll() {
 
 function handleKeydown(e: KeyboardEvent) {
   if (!textarea.value) return
-  // 任何按键都重置空闲计时器
-  resetIdleTimer()
 
   const ta = textarea.value
 
@@ -699,31 +804,40 @@ watch(
 )
 
 function handleGlobalKeydown(e: KeyboardEvent) {
-  // Ctrl+Shift+E 切换模式
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
     e.preventDefault()
     toggleMode()
   }
-  // Ctrl+Shift+L 锁定/解锁模式
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
     e.preventDefault()
     toggleLock()
   }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    if (e.shiftKey) {
+      emit('save-as-requested')
+    } else {
+      emit('save-requested')
+    }
+  }
 }
 
 onMounted(() => {
+  mode.value = props.editorMode
   renderedContent.value = renderMarkdown(content.value)
-  // 初始显示预览模式
-  mode.value = 'preview'
-  // 添加全局快捷键监听
+  if (props.editorMode === 'edit') {
+    nextTick(() => {
+      if (textarea.value) textarea.value.focus()
+    })
+  } else {
+    if (textarea.value) textarea.value.blur()
+  }
   window.addEventListener('keydown', handleGlobalKeydown)
 })
 
 onBeforeUnmount(() => {
   if (renderTimer) clearTimeout(renderTimer)
-  if (idleTimer) clearTimeout(idleTimer)
   if (typingTimer) clearTimeout(typingTimer)
-  // 移除全局快捷键监听
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
@@ -767,6 +881,7 @@ defineExpose({
       enterPreviewMode()
     }
   },
+  jumpToLine,
   toggleMode,
   setLockMode,
   isModeLocked: () => modeLocked.value,

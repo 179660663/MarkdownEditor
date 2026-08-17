@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 interface Doc {
   id: string
@@ -7,6 +7,7 @@ interface Doc {
   content: string
   updatedAt: number
   filePath?: string
+  mode: 'edit' | 'preview'
 }
 
 interface RecentFile {
@@ -20,13 +21,41 @@ interface Tab {
   isDirty: boolean
 }
 
+interface FileNode {
+  name: string
+  path: string
+  isDirectory: boolean
+  children?: FileNode[]
+}
+
+interface FolderEntry {
+  id: string
+  path: string
+  name: string
+  tree: FileNode[]
+  expanded: Set<string>
+  collapsed: boolean
+}
+
 export const useEditorStore = defineStore('editor', () => {
   const documents = ref<Doc[]>([])
   const currentFilePath = ref<string | null>(null)
   const recentFiles = ref<RecentFile[]>([])
   const isDirty = ref(false)
-  // 标记正在加载/切换文件，此时 updateDocument 不应将 isDirty 设为 true
   const isLoading = ref(false)
+
+  const folders = ref<FolderEntry[]>([])
+  const activeFolderId = ref<string | null>(null)
+
+  const currentFolder = computed(() => {
+    const active = folders.value.find((f) => f.id === activeFolderId.value)
+    return active ? active.path : null
+  })
+
+  const folderTree = computed<FileNode[]>(() => {
+    const active = folders.value.find((f) => f.id === activeFolderId.value)
+    return active ? active.tree : []
+  })
 
   const tabs = ref<Tab[]>([])
   const activeTabId = ref<string | null>(null)
@@ -35,14 +64,15 @@ export const useEditorStore = defineStore('editor', () => {
     return filePath.split(/[\\/]/).pop() || filePath
   }
 
-  function addDocument(title: string, content: string, filePath?: string): string {
+  function addDocument(title: string, content: string, filePath?: string, mode: 'edit' | 'preview' = 'edit'): string {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     documents.value.push({
       id,
       title,
       content,
       updatedAt: Date.now(),
-      filePath
+      filePath,
+      mode
     })
     return id
   }
@@ -60,16 +90,15 @@ export const useEditorStore = defineStore('editor', () => {
     if (doc) {
       doc.content = content
       doc.updatedAt = Date.now()
-      // 如果没有文件路径（新建文档），根据内容更新标题
       if (!doc.filePath && content.trim()) {
         doc.title = content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 50) || '无标题文档'
       }
-      // 如果有文件路径，title 保持为文件名，不被内容覆盖
-      // 加载/切换文件时不设置 dirty 标记
       if (!isLoading.value) {
-        isDirty.value = true
-        updateTabDirty(id, true)
-        updateTabTitle(id, doc.title)
+        if (doc.filePath) {
+          isDirty.value = true
+          updateTabDirty(id, true)
+          updateTabTitle(id, doc.title)
+        }
       }
     }
   }
@@ -126,21 +155,22 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function setActiveTab(id: string) {
+    isLoading.value = true
     activeTabId.value = id
     const doc = getDocument(id)
     if (doc) {
-      // 切换到文档时，同步更新当前文件路径
       currentFilePath.value = doc.filePath || null
-      // 标记正在加载，防止 updateDocument 错误地设置 dirty 标记
-      isLoading.value = true
-      isDirty.value = false
-      // 清除标签的 dirty 状态
-      updateTabDirty(id, false)
-      // 稍后清除 isLoading 标记
-      setTimeout(() => {
-        isLoading.value = false
-      }, 100)
+      if (!doc.filePath) {
+        isDirty.value = true
+        updateTabDirty(id, true)
+      } else {
+        isDirty.value = false
+        updateTabDirty(id, false)
+      }
     }
+    setTimeout(() => {
+      isLoading.value = false
+    }, 300)
   }
 
   function moveTab(fromIndex: number, toIndex: number) {
@@ -164,6 +194,13 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  function setDocMode(id: string, mode: 'edit' | 'preview') {
+    const doc = documents.value.find((d) => d.id === id)
+    if (doc) {
+      doc.mode = mode
+    }
+  }
+
   function markTabClean(id: string) {
     updateTabDirty(id, false)
     const doc = getDocument(id)
@@ -175,12 +212,14 @@ export const useEditorStore = defineStore('editor', () => {
   async function openFileDialog(): Promise<{ path: string; content: string } | null> {
     const result = await window.electronAPI.openFile()
     if (result) {
-      currentFilePath.value = result.path
-      // 标记正在加载，防止后续 updateDocument 错误设置 dirty
       isLoading.value = true
+      currentFilePath.value = result.path
       isDirty.value = false
       const fileName = getFileName(result.path)
       await addRecentFile(result.path, fileName)
+      setTimeout(() => {
+        isLoading.value = false
+      }, 300)
     }
     return result
   }
@@ -188,12 +227,14 @@ export const useEditorStore = defineStore('editor', () => {
   async function openFilePath(path: string): Promise<{ path: string; content: string } | null> {
     const result = await window.electronAPI.readFile(path)
     if (result) {
-      currentFilePath.value = result.path
-      // 标记正在加载，防止后续 updateDocument 错误设置 dirty
       isLoading.value = true
+      currentFilePath.value = result.path
       isDirty.value = false
       const fileName = getFileName(result.path)
       await addRecentFile(result.path, fileName)
+      setTimeout(() => {
+        isLoading.value = false
+      }, 300)
     }
     return result
   }
@@ -256,6 +297,177 @@ export const useEditorStore = defineStore('editor', () => {
     recentFiles.value = []
   }
 
+  async function openFolderDialog(): Promise<string | null> {
+    const result = await window.electronAPI.openFolder()
+    if (result) {
+      return await addFolder(result)
+    }
+    return null
+  }
+
+  async function addFolder(folderPath: string): Promise<string | null> {
+    const existing = folders.value.find((f) => f.path === folderPath)
+    if (existing) {
+      activeFolderId.value = existing.id
+      return existing.path
+    }
+    const tree = await window.electronAPI.listFolder(folderPath)
+    const id = 'folder-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const name = getFileName(folderPath)
+    folders.value.push({
+      id,
+      path: folderPath,
+      name,
+      tree,
+      expanded: new Set(),
+      collapsed: false
+    })
+    activeFolderId.value = id
+    persistFolders()
+    return folderPath
+  }
+
+  function setActiveFolder(id: string) {
+    activeFolderId.value = id
+  }
+
+  function removeFolder(id: string) {
+    const index = folders.value.findIndex((f) => f.id === id)
+    if (index === -1) return
+    folders.value.splice(index, 1)
+    if (activeFolderId.value === id) {
+      activeFolderId.value = folders.value.length > 0 ? folders.value[0].id : null
+    }
+    persistFolders()
+  }
+
+  function setFolderCollapsed(folderId: string, collapsed: boolean) {
+    const idx = folders.value.findIndex((f) => f.id === folderId)
+    if (idx === -1) return
+    const current = folders.value[idx]
+    const updated: FolderEntry = { ...current, collapsed }
+    folders.value.splice(idx, 1, updated)
+    persistFolders()
+  }
+
+  function toggleFolderNode(folderId: string, path: string) {
+    const idx = folders.value.findIndex((f) => f.id === folderId)
+    if (idx === -1) return
+    const folder = folders.value[idx]
+    const newSet = new Set(folder.expanded)
+    if (newSet.has(path)) {
+      newSet.delete(path)
+    } else {
+      newSet.add(path)
+    }
+    const updated: FolderEntry = { ...folder, expanded: newSet }
+    folders.value.splice(idx, 1, updated)
+  }
+
+  function collectAllDirPaths(nodes: FileNode[]): string[] {
+    const paths: string[] = []
+    for (const node of nodes) {
+      if (node.isDirectory) {
+        paths.push(node.path)
+        if (node.children) {
+          paths.push(...collectAllDirPaths(node.children))
+        }
+      }
+    }
+    return paths
+  }
+
+  function expandAllFolderNodes(folderId: string) {
+    const idx = folders.value.findIndex((f) => f.id === folderId)
+    if (idx === -1) return
+    const folder = folders.value[idx]
+    const allPaths = collectAllDirPaths(folder.tree)
+    const updated: FolderEntry = { ...folder, expanded: new Set(allPaths) }
+    folders.value.splice(idx, 1, updated)
+  }
+
+  function collapseAllFolderNodes(folderId: string) {
+    const idx = folders.value.findIndex((f) => f.id === folderId)
+    if (idx === -1) return
+    const folder = folders.value[idx]
+    const updated: FolderEntry = { ...folder, expanded: new Set() }
+    folders.value.splice(idx, 1, updated)
+  }
+
+  function getFolderExpanded(folderId: string): Set<string> {
+    const folder = folders.value.find((f) => f.id === folderId)
+    return folder ? folder.expanded : new Set()
+  }
+
+  function getFolderById(id: string): FolderEntry | undefined {
+    return folders.value.find((f) => f.id === id)
+  }
+
+  function listFolderContents() {
+    // kept for backward compat, now a no-op since tree is built on add
+  }
+
+  function clearFolder() {
+    if (activeFolderId.value) {
+      removeFolder(activeFolderId.value)
+    }
+  }
+
+  function clearAllFolders() {
+    folders.value = []
+    activeFolderId.value = null
+    persistFolders()
+  }
+
+  async function restoreFolders(): Promise<void> {
+    try {
+      const saved = await window.electronAPI.loadFolders()
+      if (!saved || saved.length === 0) return
+      for (const savedFolder of saved) {
+        if (!savedFolder.path) continue
+        try {
+          const tree = await window.electronAPI.listFolder(savedFolder.path)
+          const id = 'folder-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+          folders.value.push({
+            id,
+            path: savedFolder.path,
+            name: savedFolder.name || getFileName(savedFolder.path),
+            tree,
+            expanded: new Set(),
+            collapsed: savedFolder.collapsed || false
+          })
+        } catch (err) {
+          console.warn('[Store] Failed to restore folder:', savedFolder.path, err)
+        }
+      }
+      if (folders.value.length > 0) {
+        activeFolderId.value = folders.value[0].id
+      }
+    } catch (err) {
+      console.error('[Store] Failed to restore folders:', err)
+    }
+  }
+
+  function persistFolders() {
+    const data = folders.value.map((f) => ({
+      path: f.path,
+      name: f.name,
+      collapsed: f.collapsed
+    }))
+    window.electronAPI.saveFolders(data).catch((err) => {
+      console.error('[Store] Failed to persist folders:', err)
+    })
+  }
+
+  function getFullPath(relPath: string, folderId?: string): string {
+    const fid = folderId || activeFolderId.value
+    const folder = folders.value.find((f) => f.id === fid)
+    if (!folder) return relPath
+    const basePath = folder.path.replace(/[\\/]+$/, '')
+    const file = relPath.replace(/^[\\/]+/, '')
+    return basePath + '/' + file
+  }
+
   return {
     documents,
     currentFilePath,
@@ -263,6 +475,10 @@ export const useEditorStore = defineStore('editor', () => {
     isDirty,
     tabs,
     activeTabId,
+    folders,
+    activeFolderId,
+    currentFolder,
+    folderTree,
     addDocument,
     getDocument,
     getDocumentByPath,
@@ -276,6 +492,7 @@ export const useEditorStore = defineStore('editor', () => {
     moveTab,
     updateTabTitle,
     updateTabDirty,
+    setDocMode,
     markTabClean,
     openFileDialog,
     openFilePath,
@@ -284,6 +501,21 @@ export const useEditorStore = defineStore('editor', () => {
     newDocument,
     loadRecentFiles,
     addRecentFile,
-    clearRecentFilesAction
+    clearRecentFilesAction,
+    openFolderDialog,
+    addFolder,
+    setActiveFolder,
+    removeFolder,
+    toggleFolderNode,
+    expandAllFolderNodes,
+    collapseAllFolderNodes,
+    getFolderExpanded,
+    getFolderById,
+    listFolderContents,
+    clearFolder,
+    clearAllFolders,
+    restoreFolders,
+    setFolderCollapsed,
+    getFullPath
   }
 })

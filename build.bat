@@ -1,10 +1,10 @@
 @echo off
-REM 禁用代码签名自动发现，避免符号链接权限问题
+REM Disable code signing auto-discovery to avoid symlink permission issues
 set CSC_IDENTITY_AUTO_DISCOVERY=false
-REM 设置本地缓存目录，避免全局缓存权限问题
+REM Set local cache directory to avoid global cache permission issues
 set ELECTRON_BUILDER_CACHE=%~dp0.cache\electron-builder
 if not exist "%ELECTRON_BUILDER_CACHE%" mkdir "%ELECTRON_BUILDER_CACHE%"
-REM 使用国内镜像加速下载
+REM Use Chinese mirrors for faster downloads
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 npm run make:win

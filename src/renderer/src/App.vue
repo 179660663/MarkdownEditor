@@ -13,11 +13,43 @@
   <div v-else class="app-container">
     <header class="titlebar">
       <span class="title">📝 Markdown Editor</span>
-      <div class="file-actions">
-        <button class="action-btn" @click="handleNew">新建</button>
-        <button class="action-btn" @click="handleOpen">打开</button>
-        <button class="action-btn" @click="handleSave">保存</button>
-        <button class="action-btn" @click="handleSaveAs">另存为</button>
+      <div class="menu-bar">
+        <div
+          class="menu-item"
+          @mouseenter="openMenu('file')"
+          @mouseleave="closeMenu"
+          @click="toggleMenu('file')"
+        >
+          文件
+          <span class="menu-arrow">▾</span>
+        </div>
+        <div
+          v-if="activeMenu === 'file'"
+          class="dropdown-menu"
+          @mouseenter="openMenu('file')"
+          @mouseleave="closeMenu"
+        >
+          <div class="dropdown-item" @click="handleNew(); closeMenu()">
+            <span class="dropdown-icon">📄</span> 新建文档
+            <span class="shortcut">Ctrl+N</span>
+          </div>
+          <div class="dropdown-item" @click="handleOpen(); closeMenu()">
+            <span class="dropdown-icon">📃</span> 打开文件
+            <span class="shortcut">Ctrl+O</span>
+          </div>
+          <div class="dropdown-item" @click="handleOpenFolder(); closeMenu()">
+            <span class="dropdown-icon">📁</span> 打开文件夹
+          </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item" @click="handleSave(); closeMenu()">
+            <span class="dropdown-icon">💾</span> 保存
+            <span class="shortcut">Ctrl+S</span>
+          </div>
+          <div class="dropdown-item" @click="handleSaveAs(); closeMenu()">
+            <span class="dropdown-icon">📋</span> 另存为
+            <span class="shortcut">Ctrl+Shift+S</span>
+          </div>
+        </div>
       </div>
       <span class="file-path" v-if="store.currentFilePath">
         {{ store.currentFilePath }}
@@ -28,7 +60,7 @@
         <button
           class="win-btn"
           title="最小化"
-          @click="window.electronAPI.windowMinimize()"
+          @click="handleMinimize"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <rect y="4.5" width="10" height="1" fill="currentColor" />
@@ -50,7 +82,7 @@
         <button
           class="win-btn close"
           title="关闭"
-          @click="window.electronAPI.windowClose()"
+          @click="handleClose"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.2" />
@@ -83,6 +115,72 @@
           </div>
           <button class="new-btn" @click="handleNew">新建文档</button>
 
+          <div class="folder-section">
+            <div class="section-header">
+              <span>文件浏览</span>
+              <div class="section-actions">
+                <button class="icon-action-btn" title="展开全部" @click="handleExpandAll">⊞</button>
+                <button class="icon-action-btn" title="折叠全部" @click="handleCollapseAll">⊟</button>
+                <button class="icon-action-btn" title="添加文件夹" @click="handleOpenFolder">📁</button>
+                <button
+                  v-if="store.folders.length > 0"
+                  class="icon-action-btn"
+                  title="全部关闭"
+                  @click="handleCloseAllFolders"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div v-if="store.folders.length === 0" class="empty-hint">
+              <button class="folder-open-btn" @click="handleOpenFolder">📁 打开文件夹</button>
+            </div>
+            <div v-else class="folder-list">
+              <div
+                v-for="folder in store.folders"
+                :key="folder.id"
+                class="folder-item"
+                :class="{ active: folder.id === store.activeFolderId }"
+              >
+                <div class="folder-item-header" @click="store.setActiveFolder(folder.id)" @contextmenu.prevent="handleFolderContextMenu($event, folder)">
+                  <button
+                    class="folder-item-toggle"
+                    @click.stop="toggleFolderCollapsed(folder.id)"
+                  >
+                    {{ folder.collapsed ? '▸' : '▾' }}
+                  </button>
+                  <span
+                    class="folder-item-name"
+                    :title="folder.path"
+                  >
+                    📁 {{ folder.name }}
+                  </span>
+                  <span class="folder-item-path" :title="folder.path">{{ folder.path }}</span>
+                  <button
+                    class="folder-item-close"
+                    title="移除此文件夹"
+                    @click.stop="handleRemoveFolder(folder.id)"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div
+                  v-if="!folder.collapsed"
+                  class="folder-item-body"
+                >
+                  <FolderTree
+                    :nodes="folder.tree"
+                    :expanded="folder.expanded"
+                    :active-path="activeFolderPath"
+                    :base-path="folder.path"
+                    @select="(node) => handleFolderFileSelect(node, folder.id)"
+                    @toggle="(path) => store.toggleFolderNode(folder.id, path)"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="recent-section">
             <div class="section-header">
               <span>最近文件</span>
@@ -105,7 +203,7 @@
                 <span class="recent-title">{{ file.title }}</span>
               </div>
             </div>
-            <div class="empty-hint" v-else>暂无最近文件</div>
+            <!-- <div class="empty-hint" v-else>暂无最近文件</div> -->
           </div>
 
           <div class="doc-list">
@@ -125,14 +223,16 @@
         </div>
       </aside>
 
-      <section class="editor-main">
-        <div class="editor-area">
+      <section class="editor-main" :class="{ 'outline-left': outlinePosition === 'left' }">
+        <div class="editor-area" style="order: 2">
           <TyporaEditor
             v-if="store.activeTabId"
             ref="editorRef"
             v-model="currentDoc.content"
+            :editor-mode="currentTabMode"
             @save-requested="handleSave"
             @save-as-requested="handleSaveAs"
+            @mode-change="handleModeChange"
           />
           <EditorToolbar
             v-if="store.activeTabId"
@@ -146,17 +246,28 @@
         <OutlineSidebar
           v-if="showOutline"
           ref="outlineRef"
+          class="outline-sidebar"
           :content="currentDoc.content"
+          :position="outlinePosition"
           @jump-to-heading="handleJumpToHeading"
           @close="showOutline = false"
         />
         <button
           v-if="!showOutline && store.activeTabId"
           class="outline-toggle"
+          :class="{ 'outline-toggle-left': outlinePosition === 'left' }"
           title="显示大纲"
           @click="showOutline = true"
         >
           大纲
+        </button>
+        <button
+          v-if="store.activeTabId"
+          class="outline-position-toggle"
+          :title="outlinePosition === 'left' ? '切换到右侧' : '切换到左侧'"
+          @click="toggleOutlinePosition"
+        >
+          {{ outlinePosition === 'left' ? '→' : '←' }}
         </button>
       </section>
     </main>
@@ -166,11 +277,25 @@
       :file-name="statusFileName"
       :is-dirty="store.isDirty"
     />
+
+    <teleport to="body">
+      <div
+        v-if="folderContextMenu.visible"
+        class="context-menu"
+        :style="{ left: folderContextMenu.x + 'px', top: folderContextMenu.y + 'px' }"
+        @click.stop
+      >
+        <div class="context-menu-item" @click="openFolderLocation">
+          <span class="context-menu-icon">📂</span>
+          <span>打开文件位置</span>
+        </div>
+      </div>
+    </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useEditorStore } from './stores/editor'
 import { useThemeStore } from './stores/theme'
 import TyporaEditor from './components/TyporaEditor.vue'
@@ -179,6 +304,14 @@ import EditorToolbar from './components/EditorToolbar.vue'
 import TabBar from './components/TabBar.vue'
 import OutlineSidebar from './components/OutlineSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
+import FolderTree from './components/FolderTree.vue'
+
+interface FileNode {
+  name: string
+  path: string
+  isDirectory: boolean
+  children?: FileNode[]
+}
 
 const store = useEditorStore()
 const themeStore = useThemeStore()
@@ -190,12 +323,52 @@ const showSidebar = ref(true)
 const isMaximized = ref(false)
 const isLoading = ref(true)
 const appError = ref<string | null>(null)
+const outlinePosition = ref<'left' | 'right'>('right')
+
+const activeFolderPath = ref<string | null>(null)
+
+const activeMenu = ref<string | null>(null)
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+
+function openMenu(menu: string) {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+  if (activeMenu.value !== menu) {
+    activeMenu.value = menu
+  }
+}
+
+function toggleMenu(menu: string) {
+  if (activeMenu.value === menu) {
+    activeMenu.value = null
+  } else {
+    activeMenu.value = menu
+  }
+}
+
+function closeMenu() {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+  }
+  closeTimer = setTimeout(() => {
+    activeMenu.value = null
+    closeTimer = null
+  }, 150)
+}
 
 const documents = computed(() => store.documents)
 
 const currentDoc = computed(() => {
   if (!store.activeTabId) return { title: '', content: '' }
   return store.getDocument(store.activeTabId) || { title: '', content: '' }
+})
+
+const currentTabMode = computed<'edit' | 'preview'>(() => {
+  if (!store.activeTabId) return 'edit'
+  const doc = store.getDocument(store.activeTabId)
+  return doc ? doc.mode : 'preview'
 })
 
 const statusFileName = computed(() => {
@@ -243,33 +416,64 @@ async function initApp() {
   // 后台异步初始化（不阻塞 UI）
   Promise.allSettled([
     themeStore.initTheme().catch((e) => console.warn('[App] Theme init failed:', e)),
-    store.loadRecentFiles().catch((e) => console.warn('[App] Recent files init failed:', e))
+    store.loadRecentFiles().catch((e) => console.warn('[App] Recent files init failed:', e)),
+    store.restoreFolders().catch((e) => console.warn('[App] Restore folders failed:', e)),
+    loadOutlinePosition()
   ]).then(() => {
-    if (documents.value.length === 0) {
-      handleNew()
-    } else {
+    if (documents.value.length > 0) {
       const firstDoc = documents.value[0]
       store.addTab(firstDoc.id, firstDoc.title)
       store.setActiveTab(firstDoc.id)
     }
+    // 没有文档时不自动创建无标题文档，显示空状态提示
   })
 }
 
 async function toggleMaximize() {
-  await window.electronAPI.windowMaximize()
-  isMaximized.value = !isMaximized.value
+  try {
+    await window.electronAPI.windowMaximize()
+    isMaximized.value = !isMaximized.value
+  } catch (e) {
+    console.error('[Window] Maximize failed:', e)
+  }
+}
+
+async function handleMinimize() {
+  try {
+    await window.electronAPI.windowMinimize()
+  } catch (e) {
+    console.error('[Window] Minimize failed:', e)
+  }
+}
+
+async function handleClose() {
+  try {
+    await window.electronAPI.windowClose()
+  } catch (e) {
+    console.error('[Window] Close failed:', e)
+  }
 }
 
 function handleNew() {
-  const id = store.addDocument('无标题文档', '')
+  const id = store.addDocument('无标题文档', '', undefined, 'edit')
   store.addTab(id, '无标题文档')
   store.setActiveTab(id)
-  // 新建文档没有文件路径
-  store.currentFilePath = null
+  setTimeout(() => {
+    if (store.activeTabId === id) {
+      store.isDirty = true
+      store.updateTabDirty(id, true)
+    }
+  }, 50)
 }
 
 function handleSelect(id: string) {
   store.setActiveTab(id)
+}
+
+function handleModeChange(mode: 'edit' | 'preview') {
+  if (store.activeTabId) {
+    store.setDocMode(store.activeTabId, mode)
+  }
 }
 
 function handleTabSwitch(id: string) {
@@ -307,9 +511,113 @@ async function handleOpen() {
     }
     // 使用文件名作为标题
     const title = getFileName(result.path)
-    const id = store.addDocument(title, result.content, result.path)
+    const id = store.addDocument(title, result.content, result.path, 'preview')
     store.addTab(id, title)
     store.setActiveTab(id)
+  }
+}
+
+async function handleOpenFolder() {
+  try {
+    const result = await store.openFolderDialog()
+    if (result) {
+      activeFolderPath.value = null
+    }
+  } catch (err) {
+    console.error('[Renderer] Failed to open folder:', err)
+    alert('打开文件夹失败: ' + (err instanceof Error ? err.message : String(err)))
+  }
+}
+
+async function handleFolderFileSelect(node: FileNode, folderId: string) {
+  const fullPath = store.getFullPath(node.path, folderId)
+  activeFolderPath.value = node.path
+
+  const existingDoc = store.getDocumentByPath(fullPath)
+  if (existingDoc) {
+    store.setActiveTab(existingDoc.id)
+    return
+  }
+
+  const result = await store.openFilePath(fullPath)
+  if (result) {
+    const title = getFileName(result.path)
+    const id = store.addDocument(title, result.content, result.path, 'preview')
+    store.addTab(id, title)
+    store.setActiveTab(id)
+  }
+}
+
+function toggleFolderCollapsed(folderId: string) {
+  const folder = store.getFolderById(folderId)
+  if (folder) {
+    store.setFolderCollapsed(folderId, !folder.collapsed)
+  }
+}
+
+function handleRemoveFolder(folderId: string) {
+  store.removeFolder(folderId)
+  if (activeFolderPath.value && !store.getFolderById(folderId)) {
+    activeFolderPath.value = null
+  }
+}
+
+function handleCloseAllFolders() {
+  store.clearAllFolders()
+  activeFolderPath.value = null
+}
+
+function handleExpandAll() {
+  for (const folder of store.folders) {
+    store.expandAllFolderNodes(folder.id)
+  }
+}
+
+function handleCollapseAll() {
+  for (const folder of store.folders) {
+    store.collapseAllFolderNodes(folder.id)
+  }
+}
+
+const folderContextMenu = reactive<{
+  visible: boolean
+  x: number
+  y: number
+  folderId: string | null
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  folderId: null
+})
+
+function handleFolderContextMenu(event: MouseEvent, folder: { id: string; path: string }) {
+  folderContextMenu.visible = true
+  folderContextMenu.x = event.clientX
+  folderContextMenu.y = event.clientY
+  folderContextMenu.folderId = folder.id
+}
+
+function closeFolderContextMenu() {
+  folderContextMenu.visible = false
+  folderContextMenu.folderId = null
+}
+
+function openFolderLocation() {
+  const folder = store.folders.find((f) => f.id === folderContextMenu.folderId)
+  if (folder) {
+    window.electronAPI.showItemInFolder(folder.path, '')
+  }
+  closeFolderContextMenu()
+}
+
+function onContextMenuClickOutside() {
+  closeFolderContextMenu()
+}
+
+function onContextMenuKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    closeFolderContextMenu()
   }
 }
 
@@ -336,7 +644,7 @@ async function handleOpenRecent(path: string) {
   if (result) {
     // 使用文件名作为标题
     const title = getFileName(result.path)
-    const id = store.addDocument(title, result.content, result.path)
+    const id = store.addDocument(title, result.content, result.path, 'preview')
     store.addTab(id, title)
     store.setActiveTab(id)
   }
@@ -345,32 +653,37 @@ async function handleOpenRecent(path: string) {
 function handleJumpToHeading(heading: { line: number }) {
   if (!editorRef.value) return
 
-  // 先切换到编辑模式
-  editorRef.value.setMode('edit')
+  // 使用 jumpToLine 方法，根据当前模式自动处理
+  editorRef.value.jumpToLine(heading.line)
+}
 
-  nextTick(() => {
-    const ta = editorRef.value?.getTextarea()
-    if (!ta) return
-
-    const lines = ta.value.split('\n')
-    let charIndex = 0
-    for (let i = 0; i < heading.line && i < lines.length; i++) {
-      charIndex += lines[i].length + 1
+async function loadOutlinePosition() {
+  try {
+    const config = await window.electronAPI.getConfig()
+    const saved = config.outlinePosition as 'left' | 'right' | undefined
+    if (saved && (saved === 'left' || saved === 'right')) {
+      outlinePosition.value = saved
     }
+  } catch {
+    // 使用默认值
+  }
+}
 
-    const lineHeight = 25
-    ta.focus()
-    ta.selectionStart = ta.selectionEnd = charIndex
-    ta.scrollTop = heading.line * lineHeight
-  })
+async function toggleOutlinePosition() {
+  outlinePosition.value = outlinePosition.value === 'left' ? 'right' : 'left'
+  await window.electronAPI.setConfig('outlinePosition', outlinePosition.value)
 }
 
 onMounted(() => {
   initApp()
+  document.addEventListener('click', onContextMenuClickOutside)
+  document.addEventListener('keydown', onContextMenuKeyDown)
 })
 
 onUnmounted(() => {
   removeInitialLoading()
+  document.removeEventListener('click', onContextMenuClickOutside)
+  document.removeEventListener('keydown', onContextMenuKeyDown)
 })
 </script>
 
@@ -476,25 +789,77 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.file-actions {
-  display: flex;
-  gap: 4px;
+.menu-bar {
+  position: relative;
   -webkit-app-region: no-drag;
+  padding-bottom: 0;
 }
 
-.action-btn {
-  background: transparent;
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
+.menu-item {
+  padding: 4px 12px;
   font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   transition: background 0.15s;
 }
 
-.action-btn:hover {
+.menu-item:hover,
+.menu-bar:has(.dropdown-menu) .menu-item {
   background: var(--bg-tertiary);
+}
+
+.menu-arrow {
+  font-size: 8px;
+  color: var(--text-muted);
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  padding: 6px 0;
+  z-index: 1000;
+  margin-top: 0;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dropdown-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.dropdown-icon {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.shortcut {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
 }
 
 .file-path {
@@ -533,6 +898,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
 }
 
 .win-btn:hover {
@@ -628,10 +994,177 @@ onUnmounted(() => {
   filter: brightness(1.1);
 }
 
+.folder-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.folder-open-btn {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px dashed var(--border);
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  width: 100%;
+  text-align: center;
+}
+
+.folder-open-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.folder-tree-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.folder-item {
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.folder-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.folder-item-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+}
+
+.folder-item.active .folder-item-header {
+  background: var(--bg-tertiary);
+  border-bottom-color: var(--accent);
+}
+
+.folder-item-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 9px;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.folder-item-toggle:hover {
+  color: var(--text-primary);
+}
+
+.folder-item-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 120px;
+}
+
+.folder-item-path {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.folder-item-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.folder-item-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.folder-item-body {
+  padding: 4px 8px 8px;
+  background: var(--bg-primary);
+}
+
+.folder-item-placeholder {
+  display: none;
+}
+
+.folder-path {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  word-break: break-all;
+}
+
+.section-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.icon-action-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+
+.icon-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
 .recent-section {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .section-header {
@@ -694,6 +1227,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .doc-item {
@@ -756,8 +1291,81 @@ onUnmounted(() => {
   z-index: 10;
 }
 
+.outline-toggle.outline-toggle-left {
+  right: auto;
+  left: 0;
+  border-right: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+}
+
 .outline-toggle:hover {
   color: var(--text-primary);
   background: var(--bg-tertiary);
+}
+
+.outline-position-toggle {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: background 0.15s, color 0.15s;
+}
+
+.outline-position-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.outline-left .outline-position-toggle {
+  right: auto;
+  left: 12px;
+}
+</style>
+
+<style>
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 4px 0;
+  min-width: 160px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-radius: 4px;
+  margin: 0 4px;
+}
+
+.context-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.context-menu-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
 }
 </style>

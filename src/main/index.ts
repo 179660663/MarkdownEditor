@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'node:path'
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { join, relative, basename, extname, resolve } from 'node:path'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import Store from 'electron-store'
 
 interface RecentFile {
@@ -11,10 +12,11 @@ interface RecentFile {
 let store: Store<{
   windowBounds: { x: number; y: number; width: number; height: number }
   recentFiles: RecentFile[]
+  folders: { path: string; name: string; collapsed: boolean }[]
 }>
 
 process.env.DIST_ELECTRON = join(__dirname, '..')
-process.env.DIST = join(process.env.DIST_ELECTRON, '../renderer')
+process.env.DIST = join(process.env.DIST_ELECTRON, 'renderer')
 
 let win: BrowserWindow | null = null
 
@@ -27,6 +29,7 @@ function initStore() {
     store = new Store<{
       windowBounds: { x: number; y: number; width: number; height: number }
       recentFiles: RecentFile[]
+      folders: { path: string; name: string; collapsed: boolean }[]
     }>()
     console.log('[Main] electron-store initialized successfully')
   } catch (err) {
@@ -70,6 +73,20 @@ async function createWindow() {
 
   win.webContents.on('did-finish-load', () => {
     console.log('[Main] Window finished loading')
+  })
+
+  win.webContents.on('will-navigate', (event, navUrl) => {
+    if (navUrl.startsWith('http://') || navUrl.startsWith('https://') || navUrl.startsWith('mailto:')) {
+      event.preventDefault()
+      shell.openExternal(navUrl).catch(() => {})
+    }
+  })
+
+  win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+    if (/^https?:\/\//i.test(openUrl) || /^mailto:/i.test(openUrl)) {
+      shell.openExternal(openUrl).catch(() => {})
+    }
+    return { action: 'deny' }
   })
 
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
@@ -164,6 +181,83 @@ ipcMain.handle('open-file', async () => {
   const filePath = result.filePaths[0]
   const content = readFileSync(filePath, 'utf-8')
   return { path: filePath, content }
+})
+
+ipcMain.handle('open-folder', async () => {
+  if (!win) return null
+  try {
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    console.log('[Main] Folder selected:', result.filePaths[0])
+    return result.filePaths[0]
+  } catch (err) {
+    console.error('[Main] Failed to open folder dialog:', err)
+    return null
+  }
+})
+
+interface FileNode {
+  name: string
+  path: string
+  isDirectory: boolean
+  children?: FileNode[]
+}
+
+async function buildFolderTree(folderPath: string, basePath: string, depth: number = 0): Promise<FileNode[]> {
+  if (depth > 10) return []
+  const nodes: FileNode[] = []
+  try {
+    const entries = await readdir(folderPath)
+    const entriesWithStats = await Promise.all(
+      entries.map(async (entry) => {
+        const fullPath = join(folderPath, entry)
+        try {
+          const s = await stat(fullPath)
+          return { entry, fullPath, isDir: s.isDirectory() }
+        } catch {
+          return null
+        }
+      })
+    )
+
+    const validEntries = entriesWithStats.filter(Boolean) as { entry: string; fullPath: string; isDir: boolean }[]
+    validEntries.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+      return a.entry.localeCompare(b.entry)
+    })
+
+    for (const { entry, fullPath, isDir } of validEntries) {
+      const relPath = basePath ? relative(basePath, fullPath) : entry
+
+      if (isDir) {
+        nodes.push({
+          name: entry,
+          path: relPath,
+          isDirectory: true,
+          children: await buildFolderTree(fullPath, basePath, depth + 1)
+        })
+      } else {
+        const ext = extname(entry).toLowerCase()
+        if (ext === '.md' || ext === '.markdown' || ext === '.mdown' || ext === '.mkd' || ext === '.txt') {
+          nodes.push({
+            name: entry,
+            path: relPath,
+            isDirectory: false
+          })
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Main] Failed to read folder:', folderPath, err)
+  }
+  return nodes
+}
+
+ipcMain.handle('list-folder', async (_event, folderPath: string) => {
+  if (!folderPath || !existsSync(folderPath)) return []
+  return await buildFolderTree(folderPath, folderPath)
 })
 
 ipcMain.handle('save-file', (_event, filePath: string, content: string) => {
@@ -385,4 +479,42 @@ ipcMain.handle('window-close', () => {
   if (win) {
     win.close()
   }
+})
+
+ipcMain.handle('open-external', async (_event, url: string) => {
+  try {
+    await shell.openExternal(url)
+    return true
+  } catch (err) {
+    console.error('[Shell] Failed to open external:', url, err)
+    return false
+  }
+})
+
+ipcMain.handle('show-item-in-folder', async (_event, basePath: string, relPath: string) => {
+  try {
+    const fullPath = resolve(basePath, relPath)
+    console.log('[Shell] showItemInFolder:', fullPath)
+    shell.showItemInFolder(fullPath)
+    return true
+  } catch (err) {
+    console.error('[Shell] Failed to show item in folder:', basePath, relPath, err)
+    return false
+  }
+})
+
+ipcMain.handle('save-folders', (_event, folders: { path: string; name: string; collapsed: boolean }[]) => {
+  if (!store) return false
+  try {
+    store.set('folders', folders)
+    return true
+  } catch (err) {
+    console.error('[Main] save-folders failed:', err)
+    return false
+  }
+})
+
+ipcMain.handle('load-folders', () => {
+  if (!store) return []
+  return store.get('folders', [])
 })

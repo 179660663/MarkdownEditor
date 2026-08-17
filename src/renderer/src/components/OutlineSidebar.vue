@@ -1,5 +1,5 @@
 <template>
-  <aside v-show="visible" class="outline-sidebar">
+  <aside v-show="visible" class="outline-sidebar" :class="{ 'outline-sidebar-left': position === 'left' }">
     <div class="outline-header">
       <span class="outline-title">大纲</span>
       <div class="outline-actions">
@@ -19,21 +19,21 @@
         暂无标题
       </div>
       <div
-        v-for="(heading, index) in headings"
-        :key="index"
+        v-for="heading in visibleHeadings"
+        :key="heading.index"
         class="outline-item"
-        :class="[`level-${heading.level}`, { active: activeIndex === index }]"
+        :class="[`level-${heading.level}`, { active: activeIndex === heading.index }]"
       >
         <div
           class="outline-entry"
           @click="jumpTo(heading)"
         >
           <button
-            v-if="hasChildren(index)"
+            v-if="hasChildren(heading.index)"
             class="outline-toggle"
-            @click.stop="toggleItem(index)"
+            @click.stop="toggleItem(heading.index)"
           >
-            {{ collapsedIndices.has(index) ? '▸' : '▾' }}
+            {{ collapsedIndices.has(heading.index) ? '▸' : '▾' }}
           </button>
           <span v-else class="outline-toggle-placeholder"></span>
           <span class="outline-text" :title="heading.text">{{ heading.text }}</span>
@@ -56,6 +56,7 @@ interface Heading {
 
 const props = defineProps<{
   content: string
+  position?: 'left' | 'right'
 }>()
 
 const emit = defineEmits<{
@@ -98,8 +99,37 @@ const headings = computed<Heading[]>(() => {
   return result
 })
 
+const visibleHeadings = computed<Heading[]>(() => {
+  const result: Heading[] = []
+  const headingsList = headings.value
+  let skipUntilLevel = 0
+
+  for (let i = 0; i < headingsList.length; i++) {
+    const heading = headingsList[i]
+
+    // If we're in a skipped section and this heading is at a higher or equal level,
+    // we've exited the collapsed section
+    if (skipUntilLevel > 0 && heading.level <= skipUntilLevel) {
+      skipUntilLevel = 0
+    }
+
+    // If we're not in a skipped section, add this heading
+    if (skipUntilLevel === 0) {
+      result.push(heading)
+
+      // If this heading is collapsed and has children, skip all children
+      if (collapsedIndices.value.has(i) && i + 1 < headingsList.length && headingsList[i + 1].level > heading.level) {
+        skipUntilLevel = heading.level
+      }
+    }
+  }
+
+  return result
+})
+
 const allCollapsed = computed(() => {
-  return headings.value.length > 0 && collapsedIndices.value.size >= headings.value.length
+  const collapsibleCount = headings.value.filter((_, i) => hasChildren(i)).length
+  return collapsibleCount > 0 && collapsedIndices.value.size >= collapsibleCount
 })
 
 function hasChildren(index: number): boolean {
@@ -110,18 +140,26 @@ function hasChildren(index: number): boolean {
 }
 
 function toggleItem(index: number) {
-  if (collapsedIndices.value.has(index)) {
-    collapsedIndices.value.delete(index)
+  const newSet = new Set(collapsedIndices.value)
+  if (newSet.has(index)) {
+    newSet.delete(index)
   } else {
-    collapsedIndices.value.add(index)
+    newSet.add(index)
   }
+  collapsedIndices.value = newSet
 }
 
 function toggleAll() {
   if (allCollapsed.value) {
-    collapsedIndices.value.clear()
+    collapsedIndices.value = new Set()
   } else {
-    collapsedIndices.value = new Set(headings.value.map((_, i) => i))
+    const newSet = new Set<number>()
+    for (let i = 0; i < headings.value.length; i++) {
+      if (hasChildren(i)) {
+        newSet.add(i)
+      }
+    }
+    collapsedIndices.value = newSet
   }
 }
 
@@ -171,6 +209,13 @@ defineExpose({
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
+  order: 3;
+}
+
+.outline-sidebar.outline-sidebar-left {
+  border-left: none;
+  border-right: 1px solid var(--border);
+  order: 1;
 }
 
 .outline-header {

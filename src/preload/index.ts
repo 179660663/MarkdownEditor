@@ -7,6 +7,8 @@ try {
       ipcRenderer.invoke('set-config', key, value),
     newFile: () => ipcRenderer.invoke('new-file'),
     openFile: () => ipcRenderer.invoke('open-file'),
+    openFolder: () => ipcRenderer.invoke('open-folder'),
+    listFolder: (path: string) => ipcRenderer.invoke('list-folder', path),
     saveFile: (path: string, content: string) =>
       ipcRenderer.invoke('save-file', path, content),
     saveFileAs: (content: string) => ipcRenderer.invoke('save-file-as', content),
@@ -21,7 +23,12 @@ try {
       ipcRenderer.invoke('export-pdf', content, filePath),
     windowMinimize: () => ipcRenderer.invoke('window-minimize'),
     windowMaximize: () => ipcRenderer.invoke('window-maximize'),
-    windowClose: () => ipcRenderer.invoke('window-close')
+    windowClose: () => ipcRenderer.invoke('window-close'),
+    openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+    showItemInFolder: (basePath: string, relPath: string) => ipcRenderer.invoke('show-item-in-folder', basePath, relPath),
+    saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) =>
+      ipcRenderer.invoke('save-folders', folders),
+    loadFolders: () => ipcRenderer.invoke('load-folders')
   })
   console.log('[Preload] electronAPI exposed successfully')
 } catch (err) {
