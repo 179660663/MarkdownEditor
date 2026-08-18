@@ -105,7 +105,11 @@
     />
 
     <main class="editor-container">
-      <aside class="sidebar" :class="{ collapsed: !showSidebar }">
+      <aside
+        class="sidebar"
+        :class="{ collapsed: !showSidebar }"
+        :style="showSidebar ? { width: sidebarWidth + 'px' } : {}"
+      >
         <div v-if="!showSidebar" class="sidebar-toggle" @click="showSidebar = true" title="展开侧边栏">
           ⟩
         </div>
@@ -186,10 +190,11 @@
               <span>最近文件</span>
               <button
                 v-if="store.recentFiles.length > 0"
-                class="clear-btn"
+                class="icon-action-btn"
+                title="清空最近文件"
                 @click="store.clearRecentFilesAction()"
               >
-                清空
+                🗑
               </button>
             </div>
             <div class="recent-list" v-if="store.recentFiles.length > 0">
@@ -209,6 +214,14 @@
           <div class="doc-list">
             <div class="section-header">
               <span>文档列表</span>
+              <button
+                v-if="documents.length > 0"
+                class="icon-action-btn"
+                title="关闭全部文档"
+                @click="handleCloseAllDocuments"
+              >
+                ✕
+              </button>
             </div>
             <div
               v-for="doc in documents"
@@ -223,8 +236,17 @@
         </div>
       </aside>
 
+      <div
+        v-if="showSidebar"
+        class="resize-handle resize-handle-right"
+        @mousedown="startResize('sidebar', $event)"
+      ></div>
+
       <section class="editor-main" :class="{ 'outline-left': outlinePosition === 'left' }">
-        <div class="editor-area" style="order: 2">
+        <div
+          class="editor-area"
+          :style="outlinePosition === 'left' ? 'order: 3' : 'order: 1'"
+        >
           <TyporaEditor
             v-if="store.activeTabId"
             ref="editorRef"
@@ -243,10 +265,19 @@
           </div>
         </div>
 
+        <div
+          v-if="showOutline"
+          class="resize-handle resize-handle-vertical"
+          :style="outlinePosition === 'left' ? 'order: 2' : 'order: 2'"
+          @mousedown="startResize('outline', $event)"
+        ></div>
+
         <OutlineSidebar
           v-if="showOutline"
           ref="outlineRef"
           class="outline-sidebar"
+          :class="{ 'outline-sidebar-left': outlinePosition === 'left' }"
+          :style="`width: ${outlineWidth}px`"
           :content="currentDoc.content"
           :position="outlinePosition"
           @jump-to-heading="handleJumpToHeading"
@@ -264,7 +295,7 @@
         <button
           v-if="store.activeTabId"
           class="outline-position-toggle"
-          :title="outlinePosition === 'left' ? '切换到右侧' : '切换到左侧'"
+          :title="outlinePosition === 'left' ? '切换大纲到右侧' : '切换大纲到左侧'"
           @click="toggleOutlinePosition"
         >
           {{ outlinePosition === 'left' ? '→' : '←' }}
@@ -324,6 +355,52 @@ const isMaximized = ref(false)
 const isLoading = ref(true)
 const appError = ref<string | null>(null)
 const outlinePosition = ref<'left' | 'right'>('right')
+
+const sidebarWidth = ref(240)
+const outlineWidth = ref(220)
+
+type DragTarget = 'sidebar' | 'outline' | null
+const dragState = reactive<{ target: DragTarget; startX: number; startWidth: number }>({
+  target: null,
+  startX: 0,
+  startWidth: 0
+})
+
+function startResize(target: DragTarget, e: MouseEvent) {
+  e.preventDefault()
+  dragState.target = target
+  dragState.startX = e.clientX
+  dragState.startWidth = target === 'sidebar' ? sidebarWidth.value : outlineWidth.value
+  document.addEventListener('mousemove', onResize)
+  document.addEventListener('mouseup', stopResize)
+  document.body.style.cursor = target === 'sidebar' ? 'col-resize' : 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+function onResize(e: MouseEvent) {
+  if (!dragState.target) return
+  const delta = e.clientX - dragState.startX
+  if (dragState.target === 'sidebar') {
+    const newWidth = Math.min(500, Math.max(180, dragState.startWidth + delta))
+    sidebarWidth.value = newWidth
+  } else if (dragState.target === 'outline') {
+    let newWidth: number
+    if (outlinePosition.value === 'right') {
+      newWidth = Math.min(500, Math.max(150, dragState.startWidth - delta))
+    } else {
+      newWidth = Math.min(500, Math.max(150, dragState.startWidth + delta))
+    }
+    outlineWidth.value = newWidth
+  }
+}
+
+function stopResize() {
+  dragState.target = null
+  document.removeEventListener('mousemove', onResize)
+  document.removeEventListener('mouseup', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
 
 const activeFolderPath = ref<string | null>(null)
 
@@ -577,6 +654,10 @@ function handleCollapseAll() {
   for (const folder of store.folders) {
     store.collapseAllFolderNodes(folder.id)
   }
+}
+
+function handleCloseAllDocuments() {
+  store.closeAllTabs()
 }
 
 const folderContextMenu = reactive<{
@@ -918,18 +999,41 @@ onUnmounted(() => {
 }
 
 .sidebar {
-  width: 240px;
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   overflow: hidden;
   flex-shrink: 0;
-  transition: width 0.2s ease;
 }
 
 .sidebar.collapsed {
   width: 32px;
+}
+
+.resize-handle {
+  flex-shrink: 0;
+  background: var(--border);
+  transition: background 0.15s;
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--accent, #4a9eff);
+}
+
+.resize-handle-right {
+  width: 3px;
+  cursor: col-resize;
+  margin-left: -1px;
+  margin-right: -1px;
+}
+
+.resize-handle-vertical {
+  width: 3px;
+  cursor: col-resize;
+  margin-left: -1px;
+  margin-right: -1px;
 }
 
 .sidebar-content {
@@ -1176,19 +1280,6 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
-}
-
-.clear-btn {
-  background: transparent;
-  color: var(--text-muted);
-  border: none;
-  font-size: 11px;
-  cursor: pointer;
-  padding: 2px 4px;
-}
-
-.clear-btn:hover {
-  color: var(--text-primary);
 }
 
 .recent-list {

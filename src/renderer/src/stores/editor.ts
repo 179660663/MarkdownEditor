@@ -314,14 +314,16 @@ export const useEditorStore = defineStore('editor', () => {
     const tree = await window.electronAPI.listFolder(folderPath)
     const id = 'folder-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     const name = getFileName(folderPath)
-    folders.value.push({
+    const newFolder: FolderEntry = {
       id,
       path: folderPath,
       name,
       tree,
       expanded: new Set(),
       collapsed: false
-    })
+    }
+    const newList = [...folders.value, newFolder]
+    folders.value = newList
     activeFolderId.value = id
     persistFolders()
     return folderPath
@@ -332,11 +334,12 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function removeFolder(id: string) {
-    const index = folders.value.findIndex((f) => f.id === id)
-    if (index === -1) return
-    folders.value.splice(index, 1)
+    const idx = folders.value.findIndex((f) => f.id === id)
+    if (idx === -1) return
+    const newList = folders.value.filter((f) => f.id !== id)
+    folders.value = newList
     if (activeFolderId.value === id) {
-      activeFolderId.value = folders.value.length > 0 ? folders.value[0].id : null
+      activeFolderId.value = newList.length > 0 ? newList[0].id : null
     }
     persistFolders()
   }
@@ -382,7 +385,7 @@ export const useEditorStore = defineStore('editor', () => {
     if (idx === -1) return
     const folder = folders.value[idx]
     const allPaths = collectAllDirPaths(folder.tree)
-    const updated: FolderEntry = { ...folder, expanded: new Set(allPaths) }
+    const updated: FolderEntry = { ...folder, collapsed: false, expanded: new Set(allPaths) }
     folders.value.splice(idx, 1, updated)
   }
 
@@ -390,7 +393,7 @@ export const useEditorStore = defineStore('editor', () => {
     const idx = folders.value.findIndex((f) => f.id === folderId)
     if (idx === -1) return
     const folder = folders.value[idx]
-    const updated: FolderEntry = { ...folder, expanded: new Set() }
+    const updated: FolderEntry = { ...folder, collapsed: true, expanded: new Set() }
     folders.value.splice(idx, 1, updated)
   }
 
@@ -423,12 +426,14 @@ export const useEditorStore = defineStore('editor', () => {
     try {
       const saved = await window.electronAPI.loadFolders()
       if (!saved || saved.length === 0) return
+      const restored: FolderEntry[] = [...folders.value]
       for (const savedFolder of saved) {
         if (!savedFolder.path) continue
+        if (restored.some((f) => f.path === savedFolder.path)) continue
         try {
           const tree = await window.electronAPI.listFolder(savedFolder.path)
           const id = 'folder-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-          folders.value.push({
+          restored.push({
             id,
             path: savedFolder.path,
             name: savedFolder.name || getFileName(savedFolder.path),
@@ -440,6 +445,7 @@ export const useEditorStore = defineStore('editor', () => {
           console.warn('[Store] Failed to restore folder:', savedFolder.path, err)
         }
       }
+      folders.value = restored
       if (folders.value.length > 0) {
         activeFolderId.value = folders.value[0].id
       }

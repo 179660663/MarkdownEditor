@@ -1,9 +1,6 @@
 <template>
   <div class="folder-tree">
-    <div v-if="nodes.length === 0" class="empty-hint">
-      该文件夹下没有 Markdown 文件
-    </div>
-    <template v-else>
+    <template v-if="nodes.length > 0">
       <div v-for="node in nodes" :key="node.path" class="tree-item">
         <div
           v-if="node.isDirectory"

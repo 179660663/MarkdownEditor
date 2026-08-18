@@ -12,24 +12,32 @@
       @dblclick="onPreviewClick"
       @click="onPreviewMouseClick"
       @mousedown.prevent="onPreviewMouseDown"
+      @scroll="onOverlayScroll"
     ></div>
 
     <!-- 源码编辑层（带格式化样式的 Markdown 文本） -->
-    <textarea
-      v-show="mode === 'edit'"
-      ref="textarea"
-      class="editor-textarea"
-      :value="content"
-      spellcheck="false"
-      @input="handleInput"
-      @scroll="handleTextareaScroll"
-      @keydown="handleKeydown"
-      @paste="handlePaste"
-      @drop="handleDrop"
-      @dragover.prevent
-      @focus="onTextareaFocus"
-      @blur="onTextareaBlur"
-    ></textarea>
+    <div class="textarea-wrapper">
+      <textarea
+        v-show="mode === 'edit'"
+        ref="textarea"
+        class="editor-textarea"
+        :value="content"
+        spellcheck="false"
+        @input="handleInput"
+        @scroll="handleTextareaScroll"
+        @keydown="handleKeydown"
+        @paste="handlePaste"
+        @drop="handleDrop"
+        @dragover.prevent
+        @focus="onTextareaFocus"
+        @blur="onTextareaBlur"
+      ></textarea>
+      <div
+        v-if="flashLineTop >= 0"
+        class="jump-line-indicator"
+        :style="{ top: flashLineTop + 'px' }"
+      ></div>
+    </div>
 
     <!-- 滚动同步用的隐藏 overlay（仅在编辑模式存在但不可见，用于同步滚动位置） -->
     <div
@@ -68,6 +76,21 @@
         <span class="lock-icon">{{ modeLocked ? '🔒' : '🔓' }}</span>
       </button>
     </div>
+
+    <!-- 回到顶部按钮 -->
+    <button
+      v-show="showBackToTop"
+      class="back-to-top-btn"
+      title="回到顶部"
+      @click="scrollToTop"
+    >
+      ↑
+    </button>
+
+    <!-- 跳转提示 -->
+    <Transition name="fade">
+      <div v-if="showJumpHint" class="jump-hint">{{ showJumpHint }}</div>
+    </Transition>
   </div>
 </template>
 
@@ -99,6 +122,30 @@ const textarea = ref<HTMLTextAreaElement | null>(null)
 
 const content = ref(props.modelValue)
 const renderedContent = ref('')
+
+const showBackToTop = ref(false)
+
+function checkScrollTop() {
+  let scrollTop = 0
+  if (mode.value === 'preview' && overlay.value) {
+    scrollTop = overlay.value.scrollTop
+  } else if (mode.value === 'edit' && textarea.value) {
+    scrollTop = textarea.value.scrollTop
+  }
+  showBackToTop.value = scrollTop > 200
+}
+
+function scrollToTop() {
+  if (mode.value === 'preview' && overlay.value) {
+    overlay.value.scrollTo({ top: 0, behavior: 'smooth' })
+  } else if (mode.value === 'edit' && textarea.value) {
+    textarea.value.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+}
+
+function onOverlayScroll() {
+  checkScrollTop()
+}
 
 const mode = ref<'edit' | 'preview'>(props.editorMode)
 // 用户手动锁定模式时，不自动切换
@@ -141,34 +188,97 @@ function scheduleRender() {
   }, 200)
 }
 
+function getCurrentSourceLine(): number {
+  if (mode.value === 'preview' && overlay.value) {
+    const container = overlay.value
+    const scrollTop = container.scrollTop
+    const elements = container.querySelectorAll('[data-line]')
+    let lastLine = 0
+    for (const el of Array.from(elements)) {
+      const htmlEl = el as HTMLElement
+      const elTop = getElementDocTop(htmlEl, container)
+      if (elTop <= scrollTop + 3) {
+        const line = parseInt(htmlEl.getAttribute('data-line') || '0', 10)
+        if (line > lastLine) lastLine = line
+      } else {
+        break
+      }
+    }
+    return lastLine
+  }
+  if (textarea.value) {
+    const { lineHeight, paddingTop } = getTextareaMetrics()
+    return Math.max(0, Math.floor((textarea.value.scrollTop - paddingTop) / lineHeight))
+  }
+  return 0
+}
+
+function getElementDocTop(el: HTMLElement, container: HTMLElement): number {
+  let top = 0
+  let node: HTMLElement | null = el
+  while (node && node !== container) {
+    top += node.offsetTop
+    node = node.offsetParent as HTMLElement | null
+  }
+  return top
+}
+
+function scrollToSourceLine(line: number) {
+  if (line <= 0) return
+  if (mode.value === 'preview' && overlay.value) {
+    const container = overlay.value
+    const elements = container.querySelectorAll('[data-line]')
+    let bestMatchTop = 0
+    for (const el of Array.from(elements)) {
+      const htmlEl = el as HTMLElement
+      const dataLine = parseInt(htmlEl.getAttribute('data-line') || '0', 10)
+      if (dataLine <= line) {
+        bestMatchTop = getElementDocTop(htmlEl, container)
+      } else {
+        break
+      }
+    }
+    container.scrollTop = bestMatchTop
+  } else if (mode.value === 'edit' && textarea.value) {
+    const { lineHeight, paddingTop } = getTextareaMetrics()
+    textarea.value.scrollTop = Math.max(0, paddingTop + line * lineHeight)
+  }
+}
+
 function enterEditMode(silent = false) {
   if (mode.value === 'edit') return
+  
+  const savedLine = getCurrentSourceLine()
+  
   mode.value = 'edit'
   emit('mode-change', 'edit')
   if (!silent) {
-    nextTick(() => {
+    setTimeout(() => {
+      scrollToSourceLine(savedLine)
       if (textarea.value) {
+        setCursorToLine(savedLine)
         textarea.value.focus()
       }
-    })
+      checkScrollTop()
+    }, 50)
   }
 }
 
 function enterPreviewMode() {
   if (mode.value === 'preview') return
+  
+  const savedLine = getCurrentSourceLine()
+  
   mode.value = 'preview'
   emit('mode-change', 'preview')
-  // 清除 textarea 焦点，避免光标残留
   if (textarea.value) {
     textarea.value.blur()
   }
-  nextTick(() => {
-    if (overlay.value && textarea.value) {
-      overlay.value.scrollTop = textarea.value.scrollTop
-    }
-    // 切换后立即渲染最新内容
-    renderedContent.value = renderMarkdown(content.value)
-  })
+  renderedContent.value = renderMarkdown(content.value)
+  setTimeout(() => {
+    scrollToSourceLine(savedLine)
+    checkScrollTop()
+  }, 50)
 }
 
 function toggleMode() {
@@ -344,64 +454,167 @@ function onPreviewClick(e: MouseEvent) {
   }
 }
 
+function setCursorToLine(lineNumber: number) {
+  if (!textarea.value) return
+  
+  const ta = textarea.value
+  const lines = ta.value.split('\n')
+  
+  let charOffset = 0
+  let lineEndOffset = 0
+  for (let i = 0; i < lineNumber && i < lines.length; i++) {
+    charOffset += lines[i].length + 1
+  }
+  if (lineNumber < lines.length) {
+    lineEndOffset = charOffset + lines[lineNumber].length
+  } else {
+    lineEndOffset = charOffset
+  }
+  
+  ta.focus()
+  requestAnimationFrame(() => {
+    ta.selectionStart = charOffset
+    ta.selectionEnd = lineEndOffset
+  })
+}
+
 function positionCursorToLine(lineNumber: number) {
   if (!textarea.value) return
   
   const ta = textarea.value
   const lines = ta.value.split('\n')
   
-  // 计算目标行在文本中的位置
   let charOffset = 0
+  let lineEndOffset = 0
   for (let i = 0; i < lineNumber && i < lines.length; i++) {
-    charOffset += lines[i].length + 1 // +1 for newline
+    charOffset += lines[i].length + 1
+  }
+  if (lineNumber < lines.length) {
+    lineEndOffset = charOffset + lines[lineNumber].length
+  } else {
+    lineEndOffset = charOffset
   }
   
-  // 聚焦并将光标定位到目标行的开头
+  const { lineHeight, paddingTop } = getTextareaMetrics()
+  
   ta.focus()
   requestAnimationFrame(() => {
     ta.selectionStart = charOffset
-    ta.selectionEnd = charOffset
+    ta.selectionEnd = lineEndOffset
     
-    // 滚动到目标位置
-    const lineHeight = 24 // 估算行高
-    const targetScrollTop = Math.max(0, lineNumber * lineHeight - ta.clientHeight / 3)
+    const targetScrollTop = Math.max(0, paddingTop + lineNumber * lineHeight)
     ta.scrollTop = targetScrollTop
+
+    flashLine(lineNumber, lineHeight, paddingTop)
   })
+}
+
+const showJumpHint = ref('')
+const jumpHintTimer: ReturnType<typeof setTimeout> | null = null
+const flashLineTop = ref(-1)
+
+function getTextareaMetrics(): { lineHeight: number; paddingTop: number } {
+  const ta = textarea.value
+  if (!ta) return { lineHeight: 25.5, paddingTop: 24 }
+  const computed = getComputedStyle(ta)
+  const fontSize = parseFloat(computed.fontSize) || 15
+  const lineHeightVal = computed.lineHeight
+  const lineHeight = lineHeightVal === 'normal'
+    ? fontSize * 1.2
+    : parseFloat(lineHeightVal) || fontSize * 1.7
+  const paddingTop = parseFloat(computed.paddingTop) || 0
+  return { lineHeight, paddingTop }
+}
+
+function getTextareaLineHeight(): number {
+  return getTextareaMetrics().lineHeight
+}
+
+function flashLine(lineNumber: number, lineHeight: number, paddingTop: number) {
+  const ta = textarea.value
+  if (!ta) return
+  
+  flashLineTop.value = paddingTop + lineNumber * lineHeight - ta.scrollTop
+  setTimeout(() => {
+    flashLineTop.value = -1
+  }, 1500)
+}
+
+function highlightHeading(el: HTMLElement, lineNumber: number) {
+  const computed = getComputedStyle(document.documentElement)
+  const accent = computed.getPropertyValue('--accent').trim() || '#569cd6'
+  
+  const prevBg = el.style.backgroundColor
+  const prevOutline = el.style.outline
+  const prevColor = el.style.color
+  
+  el.style.backgroundColor = accent
+  el.style.outline = `3px solid ${accent}`
+  el.style.color = '#fff'
+  el.style.transition = 'background-color 0.1s, color 0.1s, outline 0.1s'
+  
+  setTimeout(() => {
+    el.style.backgroundColor = prevBg
+    el.style.outline = `2px dashed ${accent}`
+    el.style.color = prevColor
+  }, 150)
+  
+  setTimeout(() => {
+    el.style.backgroundColor = prevBg
+    el.style.outline = prevOutline
+    el.style.color = prevColor
+    el.style.transition = ''
+  }, 1200)
+
+  showJumpHint.value = `已跳转到第 ${lineNumber} 行`
+  if (jumpHintTimer) clearTimeout(jumpHintTimer)
+  jumpHintTimer = setTimeout(() => {
+    showJumpHint.value = ''
+  }, 2000)
 }
 
 function jumpToLine(lineNumber: number) {
   if (mode.value === 'preview') {
-    // 预览模式：滚动预览层到对应位置
     const previewLayer = overlay.value
     if (!previewLayer) return
     
-    // 尝试通过 data-line 属性精确定位
     const targetElement = previewLayer.querySelector(`[data-line="${lineNumber}"]`) as HTMLElement | null
     
     if (targetElement) {
-      // 找到了对应元素，滚动到该元素位置
       const containerRect = previewLayer.getBoundingClientRect()
       const elementRect = targetElement.getBoundingClientRect()
       const elementOffsetTop = elementRect.top - containerRect.top + previewLayer.scrollTop
       
+      const maxScroll = previewLayer.scrollHeight - previewLayer.clientHeight
+      const targetTop = Math.min(Math.max(0, elementOffsetTop), Math.max(0, maxScroll))
+      
       previewLayer.scrollTo({
-        top: Math.max(0, elementOffsetTop - previewLayer.clientHeight / 4),
+        top: targetTop,
         behavior: 'smooth'
       })
+      highlightHeading(targetElement, lineNumber)
     } else {
-      // 回退方案：使用比例估算滚动位置
       const totalLines = content.value.split('\n').length
       const ratio = totalLines > 0 ? lineNumber / totalLines : 0
       const targetScrollTop = ratio * previewLayer.scrollHeight
       
       previewLayer.scrollTo({
-        top: Math.max(0, targetScrollTop - previewLayer.clientHeight / 4),
+        top: Math.max(0, targetScrollTop),
         behavior: 'smooth'
       })
+      showJumpHint.value = `已跳转到第 ${lineNumber} 行`
+      if (jumpHintTimer) clearTimeout(jumpHintTimer)
+      jumpHintTimer = setTimeout(() => {
+        showJumpHint.value = ''
+      }, 2000)
     }
   } else {
-    // 编辑模式：定位光标到对应行
     positionCursorToLine(lineNumber)
+    showJumpHint.value = `已跳转到第 ${lineNumber} 行`
+    if (jumpHintTimer) clearTimeout(jumpHintTimer)
+    jumpHintTimer = setTimeout(() => {
+      showJumpHint.value = ''
+    }, 2000)
   }
 }
 
@@ -415,9 +628,12 @@ function handleInput() {
 }
 
 function handleTextareaScroll() {
-  // 同步隐藏 overlay 的滚动位置（用于大纲定位等）
   if (syncOverlay.value && textarea.value) {
     syncOverlay.value.scrollTop = textarea.value.scrollTop
+  }
+  checkScrollTop()
+  if (flashLineTop.value >= 0) {
+    flashLineTop.value = -1
   }
 }
 
@@ -838,6 +1054,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (renderTimer) clearTimeout(renderTimer)
   if (typingTimer) clearTimeout(typingTimer)
+  if (jumpHintTimer) clearTimeout(jumpHintTimer)
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
@@ -1121,6 +1338,46 @@ defineExpose({
   background: var(--selection);
 }
 
+.textarea-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 8px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.textarea-wrapper .editor-textarea {
+  pointer-events: auto;
+}
+
+.jump-line-indicator {
+  position: absolute;
+  left: 0;
+  width: 3px;
+  height: 25px;
+  background: var(--accent, #569cd6);
+  animation: indicator-flash 1.5s ease-out forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes indicator-flash {
+  0% {
+    opacity: 1;
+    height: 25px;
+  }
+  50% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+    height: 50px;
+  }
+}
+
 /* 模式切换按钮 */
 .mode-switch {
   position: absolute;
@@ -1199,5 +1456,61 @@ defineExpose({
 
 .lock-icon {
   font-size: 14px;
+}
+
+.back-to-top-btn {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-tertiary, #4a4a4a);
+  color: var(--text-primary, #fff);
+  font-size: 18px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.back-to-top-btn:hover {
+  background: var(--accent, #4a9eff);
+  transform: translateY(-2px);
+}
+
+.back-to-top-btn:active {
+  transform: translateY(0);
+}
+
+.jump-hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent, #569cd6);
+  color: #fff;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 200;
+  pointer-events: none;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
 }
 </style>

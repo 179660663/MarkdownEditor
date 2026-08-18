@@ -202,9 +202,7 @@ defineExpose({
 
 <style scoped>
 .outline-sidebar {
-  width: 220px;
   background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -213,8 +211,6 @@ defineExpose({
 }
 
 .outline-sidebar.outline-sidebar-left {
-  border-left: none;
-  border-right: 1px solid var(--border);
   order: 1;
 }
 
