@@ -252,6 +252,7 @@
             ref="editorRef"
             v-model="currentDoc.content"
             :editor-mode="currentTabMode"
+            :file-path="currentDocFilePath"
             @save-requested="handleSave"
             @save-as-requested="handleSaveAs"
             @mode-change="handleModeChange"
@@ -438,8 +439,12 @@ function closeMenu() {
 const documents = computed(() => store.documents)
 
 const currentDoc = computed(() => {
-  if (!store.activeTabId) return { title: '', content: '' }
-  return store.getDocument(store.activeTabId) || { title: '', content: '' }
+  if (!store.activeTabId) return { title: '', content: '', filePath: undefined }
+  return store.getDocument(store.activeTabId) || { title: '', content: '', filePath: undefined }
+})
+
+const currentDocFilePath = computed(() => {
+  return currentDoc.value.filePath
 })
 
 const currentTabMode = computed<'edit' | 'preview'>(() => {

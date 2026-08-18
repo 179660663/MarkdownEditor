@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
-import { join, relative, basename, extname, resolve } from 'node:path'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
+import { join, relative, basename, extname, resolve, dirname, normalize } from 'node:path'
+import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import Store from 'electron-store'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
 interface RecentFile {
   path: string
@@ -23,6 +24,108 @@ let win: BrowserWindow | null = null
 const preload = join(__dirname, '../preload/index.js')
 const url = process.env.ELECTRON_RENDERER_URL || ''
 const indexHtml = join(process.env.DIST, 'index.html')
+
+// MIME type mapping for images
+const mimeTypes: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.apng': 'image/apng',
+  '.avif': 'image/avif'
+}
+
+function getMimeType(filePath: string): string {
+  const ext = extname(filePath).toLowerCase()
+  return mimeTypes[ext] || 'application/octet-stream'
+}
+
+// Register custom protocol for local markdown resources
+function registerCustomProtocols() {
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: 'md-local',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        bypassCSP: true,
+        allowServiceWorkers: true,
+        corsEnabled: true
+      }
+    }
+  ])
+}
+
+function setupProtocolHandler() {
+  // Use registerBufferProtocol for more reliable handling
+  protocol.registerBufferProtocol('md-local', (request, callback) => {
+    try {
+      const url = new URL(request.url)
+      console.log('[md-local] Full URL:', request.url)
+      
+      // Get path from query parameter (more reliable for Windows paths)
+      let filePath = url.searchParams.get('path')
+      
+      if (!filePath) {
+        // Fallback: try to extract from pathname
+        filePath = decodeURIComponent(url.pathname)
+        if (process.platform === 'win32') {
+          filePath = filePath.replace(/^\/([a-zA-Z]:)/, '$1')
+          filePath = filePath.replace(/\//g, '\\')
+        }
+      }
+      
+      console.log('[md-local] File path:', filePath)
+      
+      if (!filePath) {
+        callback({ statusCode: 400, data: Buffer.from('Missing path parameter') })
+        return
+      }
+      
+      // Resolve and normalize the path
+      const normalizedPath = resolve(normalize(filePath))
+      
+      console.log('[md-local] Normalized path:', normalizedPath)
+      
+      // Check existence
+      if (!existsSync(normalizedPath)) {
+        console.error('[md-local] File not found:', normalizedPath)
+        callback({ statusCode: 404, data: Buffer.from('File not found: ' + normalizedPath) })
+        return
+      }
+      
+      const stats = statSync(normalizedPath)
+      if (!stats.isFile()) {
+        console.error('[md-local] Not a file:', normalizedPath)
+        callback({ statusCode: 400, data: Buffer.from('Not a file') })
+        return
+      }
+      
+      const mimeType = getMimeType(normalizedPath)
+      const fileData = readFileSync(normalizedPath)
+      
+      console.log('[md-local] Serving:', normalizedPath, 'type:', mimeType, 'size:', fileData.length)
+      
+      callback({
+        mimeType,
+        data: fileData,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=3600'
+        }
+      })
+    } catch (err) {
+      console.error('[md-local] Error:', err)
+      callback({ statusCode: 500, data: Buffer.from('Internal error: ' + (err instanceof Error ? err.message : String(err))) })
+    }
+  })
+}
 
 function initStore() {
   try {
@@ -56,7 +159,9 @@ async function createWindow() {
       preload,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      webSecurity: true,
+      allowRunningInsecureContent: true
     }
   })
 
@@ -128,7 +233,13 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Main Process] Unhandled rejection:', reason)
 })
 
+// Register custom protocols before app is ready
+registerCustomProtocols()
+
 app.whenReady().then(() => {
+  // Setup protocol handler
+  setupProtocolHandler()
+  
   createWindow().catch((err) => {
     console.error('[Main Process] Failed to create window:', err)
     app.quit()

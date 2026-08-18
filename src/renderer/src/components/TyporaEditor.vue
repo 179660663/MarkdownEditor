@@ -91,6 +91,27 @@
     <Transition name="fade">
       <div v-if="showJumpHint" class="jump-hint">{{ showJumpHint }}</div>
     </Transition>
+
+    <!-- 图片预览模态框 -->
+    <Teleport to="body">
+      <Transition name="image-preview">
+        <div
+          v-if="previewImage.show"
+          class="image-preview-modal"
+          @click="closeImagePreview"
+        >
+          <div class="image-preview-backdrop"></div>
+          <img
+            :src="previewImage.src"
+            :alt="previewImage.alt"
+            class="image-preview-img"
+            @click.stop
+          />
+          <button class="image-preview-close" @click="closeImagePreview">×</button>
+          <div class="image-preview-info">{{ previewImage.alt }}</div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -102,6 +123,7 @@ import { useToolbar } from '../composables/useToolbar'
 const props = defineProps<{
   modelValue: string
   editorMode: 'edit' | 'preview'
+  filePath?: string
 }>()
 
 const emit = defineEmits<{
@@ -124,6 +146,31 @@ const content = ref(props.modelValue)
 const renderedContent = ref('')
 
 const showBackToTop = ref(false)
+
+// 图片预览状态
+const previewImage = ref({
+  show: false,
+  src: '',
+  alt: ''
+})
+
+/**
+ * Get the directory of the current file (base path for resolving relative images)
+ */
+function getBasePath(): string | undefined {
+  if (!props.filePath) return undefined
+  const parts = props.filePath.split(/[\\/]/)
+  parts.pop() // Remove filename
+  return parts.join('/')
+}
+
+/**
+ * Render markdown with image path resolution
+ */
+function renderMarkdownContent(content: string): string {
+  const basePath = getBasePath()
+  return renderMarkdown(content, basePath)
+}
 
 function checkScrollTop() {
   let scrollTop = 0
@@ -163,7 +210,7 @@ watch(() => props.editorMode, (newMode) => {
     })
   } else {
     if (textarea.value) textarea.value.blur()
-    renderedContent.value = renderMarkdown(content.value)
+    renderedContent.value = renderMarkdownContent(content.value)
   }
 })
 
@@ -173,18 +220,18 @@ function scheduleRender() {
   if (isRapidTyping) {
     // 快速输入时使用较长延迟，减少渲染频率
     renderTimer = setTimeout(() => {
-      renderedContent.value = renderMarkdown(content.value)
+      renderedContent.value = renderMarkdownContent(content.value)
     }, 300)
   } else {
     // 停顿后立即渲染
-    renderedContent.value = renderMarkdown(content.value)
+    renderedContent.value = renderMarkdownContent(content.value)
   }
 
   if (typingTimer) clearTimeout(typingTimer)
   isRapidTyping = true
   typingTimer = setTimeout(() => {
     isRapidTyping = false
-    renderedContent.value = renderMarkdown(content.value)
+    renderedContent.value = renderMarkdownContent(content.value)
   }, 200)
 }
 
@@ -274,7 +321,7 @@ function enterPreviewMode() {
   if (textarea.value) {
     textarea.value.blur()
   }
-  renderedContent.value = renderMarkdown(content.value)
+  renderedContent.value = renderMarkdownContent(content.value)
   setTimeout(() => {
     scrollToSourceLine(savedLine)
     checkScrollTop()
@@ -358,6 +405,15 @@ function isExternalUrl(href: string | null): href is string {
 function onPreviewMouseClick(e: MouseEvent) {
   const target = e.target as HTMLElement
   if (!target) return
+
+  // 处理图片点击放大
+  const img = target.closest('img') as HTMLImageElement | null
+  if (img && mode.value === 'preview') {
+    e.preventDefault()
+    e.stopPropagation()
+    openImagePreview(img)
+    return
+  }
 
   const anchor = target.closest('a') as HTMLAnchorElement | null
   if (!anchor) {
@@ -510,7 +566,7 @@ function positionCursorToLine(lineNumber: number) {
 }
 
 const showJumpHint = ref('')
-const jumpHintTimer: ReturnType<typeof setTimeout> | null = null
+let jumpHintTimer: ReturnType<typeof setTimeout> | null = null
 const flashLineTop = ref(-1)
 
 function getTextareaMetrics(): { lineHeight: number; paddingTop: number } {
@@ -581,27 +637,47 @@ function jumpToLine(lineNumber: number) {
     const targetElement = previewLayer.querySelector(`[data-line="${lineNumber}"]`) as HTMLElement | null
     
     if (targetElement) {
-      const containerRect = previewLayer.getBoundingClientRect()
-      const elementRect = targetElement.getBoundingClientRect()
-      const elementOffsetTop = elementRect.top - containerRect.top + previewLayer.scrollTop
+      // 计算元素相对于容器的滚动位置
+      const doScroll = () => {
+        // 使用 getBoundingClientRect 计算相对于视口的位置
+        const containerRect = previewLayer.getBoundingClientRect()
+        const elementRect = targetElement.getBoundingClientRect()
+        
+        // 计算元素在容器内的相对位置
+        const relativeTop = elementRect.top - containerRect.top + previewLayer.scrollTop
+        
+        previewLayer.scrollTop = relativeTop
+        highlightHeading(targetElement, lineNumber)
+      }
       
-      const maxScroll = previewLayer.scrollHeight - previewLayer.clientHeight
-      const targetTop = Math.min(Math.max(0, elementOffsetTop), Math.max(0, maxScroll))
+      // 立即滚动
+      doScroll()
       
-      previewLayer.scrollTo({
-        top: targetTop,
-        behavior: 'smooth'
-      })
-      highlightHeading(targetElement, lineNumber)
+      // 监听图片加载，图片加载后重新计算位置
+      const images = previewLayer.querySelectorAll('img')
+      const unloadedImages = Array.from(images).filter((img) => !(img as HTMLImageElement).complete)
+      
+      if (unloadedImages.length > 0) {
+        let loadedCount = 0
+        const totalImages = unloadedImages.length
+        
+        const onImageLoad = () => {
+          loadedCount++
+          // 每个图片加载都重新计算位置
+          doScroll()
+        }
+        
+        unloadedImages.forEach((img) => {
+          img.addEventListener('load', onImageLoad, { once: true })
+          img.addEventListener('error', onImageLoad, { once: true })
+        })
+      }
     } else {
       const totalLines = content.value.split('\n').length
       const ratio = totalLines > 0 ? lineNumber / totalLines : 0
       const targetScrollTop = ratio * previewLayer.scrollHeight
       
-      previewLayer.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: 'smooth'
-      })
+      previewLayer.scrollTop = Math.max(0, targetScrollTop)
       showJumpHint.value = `已跳转到第 ${lineNumber} 行`
       if (jumpHintTimer) clearTimeout(jumpHintTimer)
       jumpHintTimer = setTimeout(() => {
@@ -946,6 +1022,21 @@ function handlePaste(e: ClipboardEvent) {
   }
 }
 
+// 图片预览功能
+function openImagePreview(img: HTMLImageElement) {
+  previewImage.value = {
+    show: true,
+    src: img.src,
+    alt: img.alt || '图片'
+  }
+  document.body.style.overflow = 'hidden'
+}
+
+function closeImagePreview() {
+  previewImage.value.show = false
+  document.body.style.overflow = ''
+}
+
 async function insertImages(files: File[]) {
   const imagesMarkdown: string[] = []
 
@@ -1019,6 +1110,17 @@ watch(
   }
 )
 
+// Watch for filePath changes to re-resolve image paths
+watch(
+  () => props.filePath,
+  () => {
+    // Re-render when filePath changes to update image paths
+    nextTick(() => {
+      renderedContent.value = renderMarkdownContent(content.value)
+    })
+  }
+)
+
 function handleGlobalKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
     e.preventDefault()
@@ -1040,7 +1142,7 @@ function handleGlobalKeydown(e: KeyboardEvent) {
 
 onMounted(() => {
   mode.value = props.editorMode
-  renderedContent.value = renderMarkdown(content.value)
+  renderedContent.value = renderMarkdownContent(content.value)
   if (props.editorMode === 'edit') {
     nextTick(() => {
       if (textarea.value) textarea.value.focus()
@@ -1245,7 +1347,48 @@ defineExpose({
 
 .editor-overlay :deep(img) {
   max-width: 100%;
-  border-radius: 4px;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  cursor: zoom-in;
+  display: block;
+  margin: 1.5em auto;
+}
+
+.editor-overlay :deep(img:hover) {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transform: translateY(-2px);
+}
+
+.editor-overlay :deep(img.image-loading) {
+  background: linear-gradient(90deg, var(--editor-bg) 25%, var(--hover-bg) 50%, var(--editor-bg) 75%);
+  background-size: 200% 100%;
+  animation: image-loading 1.5s ease-in-out infinite;
+  min-height: 120px;
+}
+
+@keyframes image-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.editor-overlay :deep(img.image-error) {
+  background: var(--editor-bg);
+  border: 2px dashed var(--border);
+  padding: 20px;
+  min-height: 120px;
+  position: relative;
+}
+
+.editor-overlay :deep(img.image-error)::after {
+  content: '图片加载失败';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
 .editor-overlay :deep(hr) {
@@ -1512,5 +1655,98 @@ defineExpose({
 .fade-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(-10px);
+}
+
+/* 图片预览模态框 */
+.image-preview-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.image-preview-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(4px);
+}
+
+.image-preview-img {
+  position: relative;
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  cursor: zoom-out;
+  z-index: 1;
+}
+
+.image-preview-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-preview-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+
+.image-preview-info {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  max-width: 80vw;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 20px;
+}
+
+/* 图片预览动画 */
+.image-preview-enter-active,
+.image-preview-leave-active {
+  transition: all 0.3s ease;
+}
+
+.image-preview-enter-from .image-preview-backdrop,
+.image-preview-leave-to .image-preview-backdrop {
+  opacity: 0;
+}
+
+.image-preview-enter-from .image-preview-img,
+.image-preview-leave-to .image-preview-img {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.image-preview-enter-active .image-preview-img,
+.image-preview-leave-active .image-preview-img {
+  transition: all 0.3s ease;
 }
 </style>
