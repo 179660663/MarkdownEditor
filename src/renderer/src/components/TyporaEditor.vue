@@ -133,6 +133,7 @@ const emit = defineEmits<{
   (e: 'focus-toolbar'): void
   (e: 'blur-toolbar'): void
   (e: 'mode-change', mode: 'edit' | 'preview'): void
+  (e: 'scroll-line-change', line: number): void
 }>()
 
 const { wrapSelectionInTextarea, insertAtCursorInTextarea } = useToolbar()
@@ -192,6 +193,11 @@ function scrollToTop() {
 
 function onOverlayScroll() {
   checkScrollTop()
+  // 滚动时同步更新大纲选中行
+  const currentLine = getCurrentSourceLine()
+  if (currentLine > 0) {
+    emit('scroll-line-change', currentLine)
+  }
 }
 
 const mode = ref<'edit' | 'preview'>(props.editorMode)
@@ -258,10 +264,29 @@ function getCurrentSourceLine(): number {
     return lastLine
   }
   if (textarea.value) {
-    const { lineHeight, paddingTop } = getTextareaMetrics()
-    return Math.max(0, Math.floor((textarea.value.scrollTop - paddingTop) / lineHeight))
+    // 使用镜像测量找到当前 scrollTop 对应的行号（处理 pre-wrap 软换行）
+    return getLineFromScrollTop(textarea.value)
   }
   return 0
+}
+
+// 通过 scrollTop 反查对应的逻辑行号（1-indexed）
+function getLineFromScrollTop(ta: HTMLTextAreaElement): number {
+  const targetTop = ta.scrollTop
+  const lines = ta.value.split('\n')
+  let low = 0
+  let high = lines.length - 1
+  // 二分查找最接近 targetTop 的行
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2)
+    const midTop = measureLineTopOffset(ta, mid)
+    if (midTop <= targetTop) {
+      low = mid
+    } else {
+      high = mid - 1
+    }
+  }
+  return low + 1 // 转为 1-indexed
 }
 
 function getElementDocTop(el: HTMLElement, container: HTMLElement): number {
@@ -291,8 +316,10 @@ function scrollToSourceLine(line: number) {
     }
     container.scrollTop = bestMatchTop
   } else if (mode.value === 'edit' && textarea.value) {
-    const { lineHeight, paddingTop } = getTextareaMetrics()
-    textarea.value.scrollTop = Math.max(0, paddingTop + line * lineHeight)
+    // 使用镜像测量精确定位，处理 pre-wrap 软换行
+    // measureLineTopOffset 需要 0-indexed 行索引
+    const lineTop = measureLineTopOffset(textarea.value, line - 1)
+    textarea.value.scrollTop = lineTop
   }
 }
 
@@ -730,6 +757,11 @@ function handleTextareaScroll() {
     Math.abs(textarea.value.scrollTop - jumpScrollTop) > 2
   ) {
     flashLineTop.value = -1
+  }
+  // 滚动时同步更新大纲选中行
+  const currentLine = getCurrentSourceLine()
+  if (currentLine > 0) {
+    emit('scroll-line-change', currentLine)
   }
 }
 

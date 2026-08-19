@@ -318,14 +318,26 @@ function addSourceLineAttributesBrowser(html: string, tokens: any[]): string {
   
   if (!container) return html
   
-  // 为所有标题元素添加 data-line（直接使用索引作为 ID）
-  const headings = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  // 收集所有 heading token 的行号信息
+  const headingLineMap = new Map<number, number>() // index -> line number
   let headingIndex = 0
-  
-  for (const heading of headings) {
-    heading.setAttribute('data-heading-id', String(headingIndex))
-    headingIndex++
+  for (const token of tokens) {
+    if (token.type === 'heading_open' && /^h[1-6]$/.test(token.tag)) {
+      const line = token.map ? token.map[0] + 1 : 1
+      headingLineMap.set(headingIndex, line)
+      headingIndex++
+    }
   }
+  
+  // 为所有标题元素添加 data-heading-id 和 data-line
+  const headings = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  headings.forEach((heading, index) => {
+    heading.setAttribute('data-heading-id', String(index))
+    const line = headingLineMap.get(index)
+    if (line) {
+      heading.setAttribute('data-line', String(line))
+    }
+  })
   
   return container.innerHTML
 }

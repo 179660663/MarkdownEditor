@@ -256,6 +256,7 @@
             @save-requested="handleSave"
             @save-as-requested="handleSaveAs"
             @mode-change="handleModeChange"
+            @scroll-line-change="handleScrollLineChange"
           />
           <EditorToolbar
             v-if="store.activeTabId"
@@ -740,6 +741,12 @@ function handleJumpToHeading(heading: { line: number; index: number }) {
   if (!editorRef.value) return
   // 预览模式使用 heading index 跳转，编辑模式使用行号
   editorRef.value.jumpToLine(heading.line, heading.index)
+}
+
+function handleScrollLineChange(line: number) {
+  if (outlineRef.value) {
+    outlineRef.value.setActiveByLine(line)
+  }
 }
 
 async function loadOutlinePosition() {
