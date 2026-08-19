@@ -97,9 +97,6 @@
           type="text"
           class="content-search-input"
           placeholder="搜索内容..."
-          @keydown.enter.prevent="findNext"
-          @keydown.shift.enter.prevent="findPrev"
-          @keydown.esc.prevent="closeSearchBox"
         />
         <span v-if="searchMatchCount > 0" class="content-search-count">
           {{ searchCurrentMatch + 1 }}/{{ searchMatchCount }}
@@ -757,9 +754,9 @@ function handleTextareaScroll() {
 function handleKeydown(e: KeyboardEvent) {
   if (!textarea.value) return
 
-  // 如果搜索框打开，让搜索框处理 Enter 和 Esc 键
+  // 如果搜索框打开，放行导航键让全局处理
   if (showSearchBox.value) {
-    if (e.key === 'Enter' || e.key === 'Escape') {
+    if (e.key === 'Enter' || e.key === 'Escape' || (e.shiftKey && e.key === 'Enter')) {
       return
     }
   }

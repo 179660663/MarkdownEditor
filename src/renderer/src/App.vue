@@ -30,7 +30,7 @@
           @mouseleave="closeMenu"
         >
           <div class="dropdown-item" @click="handleNew(); closeMenu()">
-            <span class="dropdown-icon">📄</span> 新建文档
+            <span class="dropdown-icon">📄</span> 新建文件
             <span class="shortcut">Ctrl+N</span>
           </div>
           <div class="dropdown-item" @click="handleOpen(); closeMenu()">
@@ -117,7 +117,7 @@
           <div class="sidebar-header">
             <button class="icon-btn" title="收起侧边栏" @click="showSidebar = false">⟨</button>
           </div>
-          <button class="new-btn" @click="handleNew">新建文档</button>
+          <button class="new-btn" @click="handleNew">新建文件</button>
 
           <div class="folder-section">
             <div class="section-header">
@@ -776,7 +776,9 @@ async function handleGlobalKeyDown(e: KeyboardEvent) {
     return
   }
 
-  // 搜索框打开时的导航快捷键（全局可用）
+  const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+
+  // 搜索框打开时的导航快捷键（全局处理）
   if (editorRef.value?.getSearchBoxVisible?.()) {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -794,14 +796,12 @@ async function handleGlobalKeyDown(e: KeyboardEvent) {
     }
   }
 
-  const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
-
   // 以下快捷键在输入框中不处理
   if (isTextInput) {
     return
   }
 
-  // Ctrl/Cmd + N: 新建文档
+  // Ctrl/Cmd + N: 新建文件
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
     e.preventDefault()
     handleNew()
