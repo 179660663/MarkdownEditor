@@ -9,9 +9,8 @@
       class="editor-overlay"
       ref="overlay"
       v-html="renderedContent"
-      @dblclick="onPreviewClick"
       @click="onPreviewMouseClick"
-      @mousedown.prevent="onPreviewMouseDown"
+      @mousedown="onPreviewMouseDown"
       @scroll="onOverlayScroll"
     ></div>
 
@@ -67,14 +66,7 @@
         <span class="mode-icon">✏️</span>
         <span class="mode-label">编辑</span>
       </button>
-      <button
-        class="mode-lock-btn"
-        :class="{ locked: modeLocked }"
-        :title="modeLocked ? '已锁定模式（点击解锁）' : '锁定模式（防止自动切换）'"
-        @click.stop="toggleLock"
-      >
-        <span class="lock-icon">{{ modeLocked ? '🔒' : '🔓' }}</span>
-      </button>
+
     </div>
 
     <!-- 回到顶部按钮 -->
@@ -201,8 +193,7 @@ function onOverlayScroll() {
 }
 
 const mode = ref<'edit' | 'preview'>(props.editorMode)
-// 用户手动锁定模式时，不自动切换
-const modeLocked = ref(false)
+
 
 let renderTimer: ReturnType<typeof setTimeout> | null = null
 let isRapidTyping = false
@@ -368,22 +359,14 @@ function toggleMode() {
 }
 
 function switchToPreview() {
-  setLockMode(true)
   enterPreviewMode()
 }
 
 function switchToEdit() {
-  setLockMode(true)
   enterEditMode()
 }
 
-function toggleLock() {
-  setLockMode(!modeLocked.value)
-}
 
-function setLockMode(locked: boolean) {
-  modeLocked.value = locked
-}
 
 let isTextareaFocused = false
 
@@ -404,6 +387,7 @@ function onPreviewMouseDown(e: MouseEvent) {
   const anchor = target.closest('a') as HTMLAnchorElement | null
   const href = anchor ? anchor.getAttribute('href') : null
 
+  // 锚点链接：按住修饰键时阻止默认行为（防止新窗口打开）
   if (href && href.startsWith('#')) {
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
       e.preventDefault()
@@ -412,6 +396,7 @@ function onPreviewMouseDown(e: MouseEvent) {
     return
   }
 
+  // 外部链接：按住修饰键时在外部打开
   if (href && isExternalUrl(href)) {
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
       e.preventDefault()
@@ -419,12 +404,8 @@ function onPreviewMouseDown(e: MouseEvent) {
       window.electronAPI.openExternal(href)
       return
     }
-  } else if (!anchor) {
-    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
-      e.preventDefault()
-      e.stopPropagation()
-    }
   }
+  // 不阻止其他情况（允许文本选择）
 }
 
 function isExternalUrl(href: string | null): href is string {
@@ -448,16 +429,14 @@ function onPreviewMouseClick(e: MouseEvent) {
 
   const anchor = target.closest('a') as HTMLAnchorElement | null
   if (!anchor) {
-    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
-      e.preventDefault()
-      e.stopPropagation()
-    }
+    // 非链接区域：不阻止默认行为，允许文本选择
     return
   }
 
   const href = anchor.getAttribute('href')
   if (!href) return
 
+  // 锚点链接：按住修饰键时阻止默认行为
   if (href.startsWith('#')) {
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
       e.preventDefault()
@@ -466,78 +445,14 @@ function onPreviewMouseClick(e: MouseEvent) {
     return
   }
 
-  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
-    e.preventDefault()
-    e.stopPropagation()
-    window.electronAPI.openExternal(href)
-    return
-  }
-
+  // 外部链接：按住修饰键时在外部打开，单击不阻止（允许正常导航）
   if (isExternalUrl(href)) {
-    e.preventDefault()
-    e.stopPropagation()
-    window.electronAPI.openExternal(href)
-  }
-}
-
-function onPreviewClick(e: MouseEvent) {
-  e.stopPropagation()
-  
-  const target = e.target as HTMLElement
-  const previewLayer = overlay.value
-  
-  if (previewLayer && target) {
-    // 优先使用 data-line 属性精确定位
-    const clickedElement = target.closest('[data-line]') as HTMLElement | null
-    let targetLine = 0
-    
-    if (clickedElement && clickedElement.hasAttribute('data-line')) {
-      // 使用 data-line 属性获取精确行号
-      targetLine = parseInt(clickedElement.getAttribute('data-line') || '0', 10)
-      
-      // 根据点击位置在元素内的相对位置微调行号
-      const clickY = e.clientY
-      const rect = clickedElement.getBoundingClientRect()
-      const elementHeight = rect.height
-      const relativeY = elementHeight > 0 ? (clickY - rect.top) / elementHeight : 0
-      
-      // 如果点击在元素下半部分，可能需要向下偏移
-      const contentLines = content.value.split('\n').length
-      const elementApproxLines = Math.max(1, Math.ceil(elementHeight / 24))
-      const lineOffset = Math.floor(relativeY * elementApproxLines)
-      
-      targetLine = Math.min(targetLine + lineOffset, contentLines - 1)
-    } else {
-      // 回退方案：使用位置比例估算
-      const clickY = e.clientY
-      const previewRect = previewLayer.getBoundingClientRect()
-      const scrollTop = previewLayer.scrollTop
-      const totalHeight = previewLayer.scrollHeight
-      
-      const clickRatio = totalHeight > 0 
-        ? (clickY - previewRect.top + scrollTop) / totalHeight 
-        : 0
-      
-      const totalLines = content.value.split('\n').length
-      targetLine = Math.floor(clickRatio * totalLines)
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+      window.electronAPI.openExternal(href)
     }
-    
-    // 确保行号在有效范围内
-    const totalLines = content.value.split('\n').length
-    targetLine = Math.max(0, Math.min(targetLine, totalLines - 1))
-    
-    // 切换到编辑模式
-    mode.value = 'edit'
-    emit('mode-change', 'edit')
-    
-    // 使用 setTimeout 确保 DOM 完全渲染后再定位光标
-    setTimeout(() => {
-      if (textarea.value) {
-        positionCursorToLine(targetLine)
-      }
-    }, 30)
-  } else {
-    enterEditMode()
+    // 普通单击不处理，允许默认行为
   }
 }
 
@@ -1254,8 +1169,6 @@ defineExpose({
   },
   jumpToLine,
   toggleMode,
-  setLockMode,
-  isModeLocked: () => modeLocked.value,
   syncFromTextarea: () => {
     if (!textarea.value) return
     content.value = textarea.value.value
@@ -1291,6 +1204,8 @@ defineExpose({
   white-space: pre-wrap;
   word-wrap: break-word;
   cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .editor-overlay--sync {
@@ -1623,32 +1538,6 @@ defineExpose({
 
 .mode-label {
   font-weight: 500;
-}
-
-.mode-lock-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mode-lock-btn:hover {
-  background: var(--hover-bg);
-}
-
-.mode-lock-btn.locked {
-  color: var(--accent);
-}
-
-.lock-icon {
-  font-size: 14px;
 }
 
 .back-to-top-btn {
