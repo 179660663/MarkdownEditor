@@ -126,6 +126,12 @@
             @click.stop
           />
           <button class="image-preview-close" @click="closeImagePreview">×</button>
+          <div class="image-preview-toolbar">
+            <button class="image-preview-btn" @click.stop="openImageInFolder">
+              <span class="btn-icon">📂</span>
+              <span class="btn-label">打开文件位置</span>
+            </button>
+          </div>
           <div class="image-preview-info">{{ previewImage.alt }}</div>
         </div>
       </Transition>
@@ -1094,6 +1100,31 @@ function openImagePreview(img: HTMLImageElement) {
 function closeImagePreview() {
   previewImage.value.show = false
   document.body.style.overflow = ''
+}
+
+function openImageInFolder() {
+  const src = previewImage.value.src
+  if (!src) return
+
+  try {
+    // Extract path from md-local://local?path=xxx URL
+    if (src.startsWith('md-local://')) {
+      const url = new URL(src)
+      const encodedPath = url.searchParams.get('path')
+      if (encodedPath) {
+        const fullPath = decodeURIComponent(encodedPath)
+        console.log('[Image] Opening folder for:', fullPath)
+        // Use empty basePath since we already have the full path
+        window.electronAPI.showItemInFolder(fullPath, '')
+      }
+    } else if (src.startsWith('file://')) {
+      // Handle file:// protocol
+      const filePath = decodeURIComponent(src.replace('file://', ''))
+      window.electronAPI.showItemInFolder(filePath, '')
+    }
+  } catch (err) {
+    console.error('[Image] Failed to open image folder:', err)
+  }
 }
 
 async function insertImages(files: File[]) {
@@ -2164,6 +2195,50 @@ defineExpose({
   padding: 8px 16px;
   background: rgba(0, 0, 0, 0.5);
   border-radius: 20px;
+}
+
+.image-preview-toolbar {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 10;
+  display: flex;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.image-preview-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+  user-select: none;
+}
+
+.image-preview-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.image-preview-btn:active {
+  transform: translateY(0);
+}
+
+.image-preview-btn .btn-icon {
+  font-size: 14px;
+}
+
+.image-preview-btn .btn-label {
+  font-weight: 500;
 }
 
 /* 图片预览动画 */
