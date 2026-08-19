@@ -411,44 +411,42 @@ function readFileWithEncoding(filePath: string): string {
 
   console.log(`[Encoding] Detected encoding for ${filePath}: ${encoding} (confidence: ${confidence})`)
 
-  // 如果检测到的编码是 UTF-8，直接返回
+  // 读取内容
+  let content: string
   if (encoding === 'utf-8' || encoding === 'ascii') {
-    return buffer.toString('utf-8')
-  }
+    content = buffer.toString('utf-8')
+  } else {
+    // 对于中文编码，使用 iconv-lite 转换
+    const supportedEncodings = ['gbk', 'gb2312', 'gb18030', 'big5', 'shift_jis', 'euc-jp', 'euc-kr', 'windows-1252', 'iso-8859-1']
 
-  // 对于中文编码，使用 iconv-lite 转换
-  const supportedEncodings = ['gbk', 'gb2312', 'gb18030', 'big5', 'shift_jis', 'euc-jp', 'euc-kr', 'windows-1252', 'iso-8859-1']
-
-  if (supportedEncodings.includes(encoding)) {
-    try {
-      const content = iconv.decode(buffer, encoding)
-      console.log(`[Encoding] Converted from ${encoding} to UTF-8`)
-      return content
-    } catch (err) {
-      console.error(`[Encoding] Failed to convert from ${encoding}, falling back to UTF-8:`, err)
-      return buffer.toString('utf-8')
-    }
-  }
-
-  // 编码不确定或置信度低时，尝试用 UTF-8，如果失败则尝试 GBK
-  if (confidence < 0.5) {
-    try {
-      // 先尝试 UTF-8
-      const utf8Content = buffer.toString('utf-8')
-      // 简单检查是否有乱码特征（替换字符）
-      if (!utf8Content.includes('\uFFFD')) {
-        return utf8Content
+    if (supportedEncodings.includes(encoding)) {
+      try {
+        content = iconv.decode(buffer, encoding)
+        console.log(`[Encoding] Converted from ${encoding} to UTF-8`)
+      } catch (err) {
+        console.error(`[Encoding] Failed to convert from ${encoding}, falling back to UTF-8:`, err)
+        content = buffer.toString('utf-8')
       }
-      // 有乱码，尝试 GBK
-      console.log('[Encoding] UTF-8 has replacement chars, trying GBK')
-      return iconv.decode(buffer, 'gbk')
-    } catch {
-      return iconv.decode(buffer, 'gbk')
+    } else if (confidence < 0.5) {
+      // 编码不确定或置信度低时，尝试用 UTF-8，如果失败则尝试 GBK
+      try {
+        const utf8Content = buffer.toString('utf-8')
+        if (!utf8Content.includes('\uFFFD')) {
+          content = utf8Content
+        } else {
+          content = iconv.decode(buffer, 'gbk')
+          console.log(`[Encoding] Fallback to GBK due to low confidence`)
+        }
+      } catch {
+        content = buffer.toString('utf-8')
+      }
+    } else {
+      content = buffer.toString('utf-8')
     }
   }
 
-  // 默认使用 UTF-8
-  return buffer.toString('utf-8')
+  // 标准化换行符：\r\n -> \n，\r -> \n
+  return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
 async function buildFolderTree(folderPath: string, basePath: string, depth: number = 0): Promise<FileNode[]> {

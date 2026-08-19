@@ -18,9 +18,20 @@
     ></div>
 
     <!-- 源码编辑层（带格式化样式的 Markdown 文本） -->
-    <div class="textarea-wrapper">
+    <div class="textarea-wrapper" v-show="mode === 'edit'">
+      <!-- 行号显示区 -->
+      <div class="line-numbers" ref="lineNumbers" @scroll="onLineNumbersScroll">
+        <div
+          v-for="item in visibleLineNumbers"
+          :key="item.lineNumber"
+          class="line-number"
+          :class="{ active: item.isActive }"
+          :style="{ height: item.height + 'px', 'min-height': item.height + 'px' }"
+        >
+          {{ item.lineNumber }}
+        </div>
+      </div>
       <textarea
-        v-show="mode === 'edit'"
         ref="textarea"
         class="editor-textarea"
         :value="content"
@@ -34,6 +45,11 @@
         @focus="onTextareaFocus"
         @blur="onTextareaBlur"
         @keyup="onTextareaKeyup"
+        @click="updateCurrentLine"
+        @keyup.up="updateCurrentLine"
+        @keyup.down="updateCurrentLine"
+        @keyup.home="updateCurrentLine"
+        @keyup.end="updateCurrentLine"
       ></textarea>
       <div
         v-if="flashLineTop >= 0"
@@ -140,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { renderMarkdown } from '../utils/markdown'
 import { useToolbar } from '../composables/useToolbar'
 import mermaid from 'mermaid'
@@ -167,6 +183,89 @@ const editorContainer = ref<HTMLElement | null>(null)
 const overlay = ref<HTMLElement | null>(null)
 const syncOverlay = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
+const lineNumbers = ref<HTMLElement | null>(null)
+
+// 行号相关 - 使用 measureLineTopOffset 精确测量（与 positionCursorToLine 一致）
+interface LineNumberItem {
+  lineNumber: number
+  top: number
+  height: number
+  isActive: boolean
+}
+
+const visibleLineNumbers = ref<LineNumberItem[]>([])
+const currentLineNumber = ref(1)
+let isScrollingFromTextarea = false
+let isScrollingFromLineNumbers = false
+let lineNumbersUpdateTimer: ReturnType<typeof setTimeout> | null = null
+
+// 计算行号 - 批量测量（一次镜像、一次 reflow），高度与 positionCursorToLine 逻辑一致
+function calculateLineNumbers(): LineNumberItem[] {
+  if (!textarea.value) return []
+
+  const ta = textarea.value
+  const lineCount = ta.value.split('\n').length
+
+  // 一次测量所有行位置
+  const lineTops = measureAllLineTops(ta)
+
+  // 计算每行高度
+  const result: LineNumberItem[] = []
+  for (let i = 0; i < lineCount; i++) {
+    result.push({
+      lineNumber: i + 1,
+      top: lineTops[i],
+      height: lineTops[i + 1] - lineTops[i],
+      isActive: (i + 1) === currentLineNumber.value
+    })
+  }
+
+  return result
+}
+
+// 防抖更新行号
+function updateLineNumbersDebounced() {
+  if (lineNumbersUpdateTimer) {
+    clearTimeout(lineNumbersUpdateTimer)
+  }
+  lineNumbersUpdateTimer = setTimeout(() => {
+    visibleLineNumbers.value = calculateLineNumbers()
+  }, 150)
+}
+
+// 立即更新行号
+function updateLineNumbersImmediate() {
+  if (lineNumbersUpdateTimer) {
+    clearTimeout(lineNumbersUpdateTimer)
+  }
+  visibleLineNumbers.value = calculateLineNumbers()
+}
+
+function updateCurrentLine() {
+  if (!textarea.value) return
+  const cursorPos = textarea.value.selectionStart
+  const textBeforeCursor = textarea.value.value.substring(0, cursorPos)
+  const newLine = textBeforeCursor.split('\n').length
+  if (newLine !== currentLineNumber.value) {
+    currentLineNumber.value = newLine
+    // 只更新高亮状态，不重计算高度
+    visibleLineNumbers.value = visibleLineNumbers.value.map(item => ({
+      ...item,
+      isActive: item.lineNumber === newLine
+    }))
+  }
+}
+
+function onLineNumbersScroll() {
+  if (isScrollingFromTextarea) return
+  if (!lineNumbers.value || !textarea.value) return
+
+  isScrollingFromLineNumbers = true
+  textarea.value.scrollTop = lineNumbers.value.scrollTop
+  setTimeout(() => {
+    isScrollingFromLineNumbers = false
+  }, 50)
+}
 
 const content = ref(props.modelValue)
 const renderedContent = ref('')
@@ -365,11 +464,15 @@ function scrollToSourceLine(line: number) {
 
 function enterEditMode(silent = false) {
   if (mode.value === 'edit') return
-  
+
   const savedLine = getCurrentSourceLine()
-  
+
   mode.value = 'edit'
   emit('mode-change', 'edit')
+  // textarea 从隐藏变为可见后，必须重新测量行号（隐藏时 clientWidth 为 0，测量无效）
+  nextTick(() => {
+    updateLineNumbersImmediate()
+  })
   if (!silent) {
     setTimeout(() => {
       scrollToSourceLine(savedLine)
@@ -549,10 +652,8 @@ function setCursorToLine(lineNumber: number) {
   })
 }
 
-// 用镜像 div 精确测量目标逻辑行的像素偏移（关键：textarea 开启了 pre-wrap，
-// 长行会软换行成多个视觉行，"行号 × 行高"的算法必然错位，必须按真实排版测量）
-function measureLineTopOffset(ta: HTMLTextAreaElement, lineIndex: number): number {
-  if (lineIndex <= 0) return 0
+// 创建与 textarea 排版一致的镜像 div
+function createMirrorDiv(ta: HTMLTextAreaElement): HTMLDivElement {
   const computed = getComputedStyle(ta)
   const mirror = document.createElement('div')
   const s = mirror.style
@@ -578,6 +679,14 @@ function measureLineTopOffset(ta: HTMLTextAreaElement, lineIndex: number): numbe
   s.wordWrap = 'break-word'
   s.overflowWrap = computed.overflowWrap
   s.wordBreak = computed.wordBreak
+  return mirror
+}
+
+// 用镜像 div 精确测量目标逻辑行的像素偏移（关键：textarea 开启了 pre-wrap，
+// 长行会软换行成多个视觉行，"行号 × 行高"的算法必然错位，必须按真实排版测量）
+function measureLineTopOffset(ta: HTMLTextAreaElement, lineIndex: number): number {
+  if (lineIndex <= 0) return 0
+  const mirror = createMirrorDiv(ta)
 
   const lines = ta.value.split('\n')
   const before = lines.slice(0, lineIndex).join('\n')
@@ -590,6 +699,35 @@ function measureLineTopOffset(ta: HTMLTextAreaElement, lineIndex: number): numbe
   const offset = marker.offsetTop
   document.body.removeChild(mirror)
   return offset
+}
+
+// 一次镜像测量所有逻辑行的像素位置（性能关键：只创建一次 DOM，一次 reflow）
+// 返回 lineTops[i] = 第 i 行（0-indexed）顶部的像素偏移
+function measureAllLineTops(ta: HTMLTextAreaElement): number[] {
+  const lines = ta.value.split('\n')
+  const lineCount = lines.length
+  if (lineCount === 0) return [0]
+
+  const mirror = createMirrorDiv(ta)
+  const markers: HTMLSpanElement[] = []
+
+  // 一次性构建全部内容：每行文本 + '\n' + 行边界标记
+  for (let i = 0; i < lineCount; i++) {
+    mirror.appendChild(document.createTextNode(lines[i] + '\n'))
+    const marker = document.createElement('span')
+    marker.textContent = '\u200b'
+    mirror.appendChild(marker)
+    markers.push(marker)
+  }
+
+  document.body.appendChild(mirror)
+  // 读取所有标记位置（DOM 未变化，只触发一次 reflow）
+  const lineTops: number[] = [0]
+  for (let i = 0; i < lineCount; i++) {
+    lineTops.push(markers[i].offsetTop)
+  }
+  document.body.removeChild(mirror)
+  return lineTops
 }
 
 let jumpScrollTop = -1
@@ -734,12 +872,21 @@ function handleInput() {
   emit('update:modelValue', content.value)
   mode.value = 'edit'
   emit('mode-change', 'edit')
+  updateLineNumbersDebounced()
   scheduleRender()
 }
 
 function handleTextareaScroll() {
   if (syncOverlay.value && textarea.value) {
     syncOverlay.value.scrollTop = textarea.value.scrollTop
+  }
+  // 同步行号区域滚动
+  if (!isScrollingFromLineNumbers && lineNumbers.value && textarea.value) {
+    isScrollingFromTextarea = true
+    lineNumbers.value.scrollTop = textarea.value.scrollTop
+    setTimeout(() => {
+      isScrollingFromTextarea = false
+    }, 50)
   }
   checkScrollTop()
   // 用户手动滚动时才隐藏高亮；程序设置 scrollTop 触发的 scroll 事件不清除
@@ -751,9 +898,9 @@ function handleTextareaScroll() {
     flashLineTop.value = -1
   }
   // 滚动时同步更新大纲选中行
-  const currentLine = getCurrentSourceLine()
-  if (currentLine > 0) {
-    emit('scroll-line-change', currentLine)
+  const currentLineNum = getCurrentSourceLine()
+  if (currentLineNum > 0) {
+    emit('scroll-line-change', currentLineNum)
   }
 }
 
@@ -1449,6 +1596,7 @@ watch(
   (val) => {
     if (val !== content.value) {
       content.value = val
+      updateLineNumbersDebounced()
       scheduleRender()
     }
   }
@@ -1499,20 +1647,23 @@ onMounted(() => {
 
   mode.value = props.editorMode
   renderedContent.value = renderMarkdownContent(content.value)
-  
+
   // Render mermaid diagrams after content is rendered
   nextTick(() => {
     renderMermaidDiagrams()
   })
-  
+
+  // 初始化行号（仅编辑模式，预览模式下 textarea 隐藏无法测量）
   if (props.editorMode === 'edit') {
     nextTick(() => {
+      updateLineNumbersImmediate()
       if (textarea.value) textarea.value.focus()
     })
   } else {
     if (textarea.value) textarea.value.blur()
   }
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('resize', updateLineNumbersDebounced)
 })
 
 /**
@@ -1548,7 +1699,9 @@ onBeforeUnmount(() => {
   if (renderTimer) clearTimeout(renderTimer)
   if (typingTimer) clearTimeout(typingTimer)
   if (jumpHintTimer) clearTimeout(jumpHintTimer)
+  if (lineNumbersUpdateTimer) clearTimeout(lineNumbersUpdateTimer)
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('resize', updateLineNumbersDebounced)
 })
 
 defineExpose({
@@ -1902,15 +2055,53 @@ defineExpose({
   border-radius: 8px;
   pointer-events: none;
   overflow: hidden;
+  display: flex;
+  flex-direction: row;
+}
+
+/* 行号显示区 */
+.line-numbers {
+  width: 50px;
+  flex-shrink: 0;
+  background: var(--bg-secondary, #2d2d2d);
+  border-right: 1px solid var(--border, #3c3c3c);
+  padding: 24px 8px 24px 0;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  font-family: 'Cascadia Code', 'Consolas', 'Segoe UI', monospace;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-muted, #808080);
+  user-select: none;
+  pointer-events: auto;
+}
+
+.line-number {
+  text-align: right;
+  box-sizing: border-box;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-top: 3px;
+}
+
+.line-number.active {
+  color: var(--accent, #569cd6);
+  font-weight: 600;
 }
 
 .textarea-wrapper .editor-textarea {
   pointer-events: auto;
+  left: 50px;
+  right: 0;
+  width: auto;
 }
 
 .jump-line-indicator {
   position: absolute;
-  left: 0;
+  left: 50px;
   width: 3px;
   height: 25.5px;
   background: var(--accent, #569cd6);
