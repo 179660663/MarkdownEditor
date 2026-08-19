@@ -708,6 +708,39 @@ function onContextMenuKeyDown(e: KeyboardEvent) {
   }
 }
 
+// 全局文件菜单快捷键处理
+function handleGlobalKeyDown(e: KeyboardEvent) {
+  const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+
+  // 以下快捷键在输入框中不处理
+  if (isTextInput) {
+    return
+  }
+
+  // Ctrl/Cmd + N: 新建文档
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+    e.preventDefault()
+    handleNew()
+    return
+  }
+
+  // Ctrl/Cmd + O: 打开文件
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
+    e.preventDefault()
+    handleOpen()
+    return
+  }
+
+  // Ctrl/Cmd + W: 关闭当前标签
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
+    e.preventDefault()
+    if (store.activeTabId) {
+      store.closeTab(store.activeTabId)
+    }
+    return
+  }
+}
+
 async function handleSave() {
   if (store.activeTabId) {
     await store.saveFileAction(currentDoc.value.content)
@@ -770,12 +803,15 @@ onMounted(() => {
   initApp()
   document.addEventListener('click', onContextMenuClickOutside)
   document.addEventListener('keydown', onContextMenuKeyDown)
+  // 添加全局文件菜单快捷键监听（不使用 capture，让编辑器内部优先处理）
+  document.addEventListener('keydown', handleGlobalKeyDown)
 })
 
 onUnmounted(() => {
   removeInitialLoading()
   document.removeEventListener('click', onContextMenuClickOutside)
   document.removeEventListener('keydown', onContextMenuKeyDown)
+  document.removeEventListener('keydown', handleGlobalKeyDown)
 })
 </script>
 

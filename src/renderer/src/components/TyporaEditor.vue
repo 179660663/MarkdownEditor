@@ -8,10 +8,13 @@
       v-show="mode === 'preview'"
       class="editor-overlay"
       ref="overlay"
+      tabindex="0"
       v-html="renderedContent"
       @click="onPreviewMouseClick"
       @mousedown="onPreviewMouseDown"
       @scroll="onOverlayScroll"
+      @keydown="onOverlayKeydown"
+      @keyup="onOverlayKeyup"
     ></div>
 
     <!-- 源码编辑层（带格式化样式的 Markdown 文本） -->
@@ -30,6 +33,7 @@
         @dragover.prevent
         @focus="onTextareaFocus"
         @blur="onTextareaBlur"
+        @keyup="onTextareaKeyup"
       ></textarea>
       <div
         v-if="flashLineTop >= 0"
@@ -111,6 +115,7 @@
 import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { renderMarkdown } from '../utils/markdown'
 import { useToolbar } from '../composables/useToolbar'
+import mermaid from 'mermaid'
 
 const props = defineProps<{
   modelValue: string
@@ -192,6 +197,19 @@ function onOverlayScroll() {
   }
 }
 
+function onOverlayKeydown(e: KeyboardEvent) {
+  // keydown 不再处理，移到 keyup
+}
+
+// 使用 keyup 检测 Ctrl+Shift+E，更可靠
+function onOverlayKeyup(e: KeyboardEvent) {
+  // 检测 E 键松开时，Ctrl 和 Shift 是否仍然按住
+  if (e.code === 'KeyE' && (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    toggleMode()
+  }
+}
+
 const mode = ref<'edit' | 'preview'>(props.editorMode)
 
 
@@ -222,10 +240,12 @@ function scheduleRender() {
     // 快速输入时使用较长延迟，减少渲染频率
     renderTimer = setTimeout(() => {
       renderedContent.value = renderMarkdownContent(content.value)
+      nextTick(() => renderMermaidDiagrams())
     }, 300)
   } else {
     // 停顿后立即渲染
     renderedContent.value = renderMarkdownContent(content.value)
+    nextTick(() => renderMermaidDiagrams())
   }
 
   if (typingTimer) clearTimeout(typingTimer)
@@ -233,6 +253,7 @@ function scheduleRender() {
   typingTimer = setTimeout(() => {
     isRapidTyping = false
     renderedContent.value = renderMarkdownContent(content.value)
+    nextTick(() => renderMermaidDiagrams())
   }, 200)
 }
 
@@ -335,19 +356,26 @@ function enterEditMode(silent = false) {
 
 function enterPreviewMode() {
   if (mode.value === 'preview') return
-  
+
   const savedLine = getCurrentSourceLine()
-  
+
   mode.value = 'preview'
   emit('mode-change', 'preview')
   if (textarea.value) {
     textarea.value.blur()
   }
   renderedContent.value = renderMarkdownContent(content.value)
-  setTimeout(() => {
-    scrollToSourceLine(savedLine)
-    checkScrollTop()
-  }, 50)
+  nextTick(() => {
+    renderMermaidDiagrams()
+    // DOM 更新完成后，延迟让预览层获得焦点
+    setTimeout(() => {
+      scrollToSourceLine(savedLine)
+      checkScrollTop()
+      if (overlay.value) {
+        overlay.value.focus()
+      }
+    }, 50)
+  })
 }
 
 function toggleMode() {
@@ -378,6 +406,15 @@ function onTextareaFocus() {
 function onTextareaBlur() {
   isTextareaFocused = false
   emit('blur-toolbar')
+}
+
+// 使用 keyup 检测 Ctrl+Shift+E，更可靠
+function onTextareaKeyup(e: KeyboardEvent) {
+  // 检测 E 键松开时，Ctrl 和 Shift 是否仍然按住
+  if (e.code === 'KeyE' && (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    toggleMode()
+  }
 }
 
 function onPreviewMouseDown(e: MouseEvent) {
@@ -787,18 +824,25 @@ function handleKeydown(e: KeyboardEvent) {
   }
 
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey) {
-    const key = e.key.toLowerCase()
-    if (key === 's') {
+    const code = e.code
+    // 使用 e.code 检测，因为它更可靠（KeyS, KeyV, KeyE）
+    if (code === 'KeyS') {
       e.preventDefault()
       emit('save-as-requested')
       return
     }
-    if (key === 'v') {
+    if (code === 'KeyV') {
       e.preventDefault()
       const text = ta.value.substring(ta.selectionStart, ta.selectionEnd)
       navigator.clipboard.readText().then((clipText) => {
         insertAtCursor(ta, clipText)
       })
+      return
+    }
+    if (code === 'KeyE') {
+      e.preventDefault()
+      e.stopPropagation()
+      toggleMode()
       return
     }
   }
@@ -1084,19 +1128,13 @@ watch(
     // Re-render when filePath changes to update image paths
     nextTick(() => {
       renderedContent.value = renderMarkdownContent(content.value)
+      renderMermaidDiagrams()
     })
   }
 )
 
 function handleGlobalKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
-    e.preventDefault()
-    toggleMode()
-  }
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
-    e.preventDefault()
-    toggleLock()
-  }
+  // Ctrl/Cmd + S: 保存（在输入框外也能使用）
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
     e.preventDefault()
     if (e.shiftKey) {
@@ -1104,12 +1142,36 @@ function handleGlobalKeydown(e: KeyboardEvent) {
     } else {
       emit('save-requested')
     }
+    return
   }
 }
 
 onMounted(() => {
+  // Initialize mermaid
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'strict',
+    flowchart: {
+      useMaxWidth: true,
+      htmlLabels: true
+    },
+    sequence: {
+      useMaxWidth: true
+    },
+    gantt: {
+      useMaxWidth: true
+    }
+  })
+
   mode.value = props.editorMode
   renderedContent.value = renderMarkdownContent(content.value)
+  
+  // Render mermaid diagrams after content is rendered
+  nextTick(() => {
+    renderMermaidDiagrams()
+  })
+  
   if (props.editorMode === 'edit') {
     nextTick(() => {
       if (textarea.value) textarea.value.focus()
@@ -1119,6 +1181,35 @@ onMounted(() => {
   }
   window.addEventListener('keydown', handleGlobalKeydown)
 })
+
+/**
+ * Render mermaid diagrams in the preview area
+ */
+async function renderMermaidDiagrams() {
+  if (mode.value !== 'preview' || !overlay.value) return
+  
+  try {
+    // Find all mermaid elements
+    const mermaidElements = overlay.value.querySelectorAll('.mermaid')
+    if (mermaidElements.length === 0) return
+    
+    // Generate unique IDs for each diagram
+    mermaidElements.forEach((el, index) => {
+      if (!el.id) {
+        el.id = `mermaid-diagram-${index}-${Date.now()}`
+      }
+    })
+    
+    // Run mermaid rendering
+    await mermaid.run({
+      querySelector: '.mermaid'
+    })
+    
+    console.log('[Mermaid] Rendered', mermaidElements.length, 'diagram(s)')
+  } catch (error) {
+    console.error('[Mermaid] Failed to render diagrams:', error)
+  }
+}
 
 onBeforeUnmount(() => {
   if (renderTimer) clearTimeout(renderTimer)
@@ -1418,6 +1509,22 @@ defineExpose({
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0.5em 0;
+}
+
+/* Mermaid diagrams */
+.editor-overlay :deep(.mermaid) {
+  display: flex;
+  justify-content: center;
+  margin: 1.5em 0;
+  padding: 16px;
+  background: var(--editor-bg);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.editor-overlay :deep(.mermaid svg) {
+  max-width: 100%;
+  height: auto;
 }
 
 .editor-textarea {

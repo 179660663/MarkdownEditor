@@ -131,6 +131,32 @@ md.renderer.rules.footnote_block = (tokens, idx, options, env, self) => {
   return text
 }
 
+// Store original fence rule
+const originalFenceRule = md.renderer.rules.fence || function(tokens, idx, options, env, self) {
+  const token = tokens[idx]
+  const info = token.info ? md.utils.escapeHtml(token.info) : ''
+  const langName = info.split(/\s+/g)[0]
+  const highlighted = options.highlight ? options.highlight(token.content, langName || '') : md.utils.escapeHtml(token.content)
+  
+  return `<pre><code${langName ? ` class="language-${langName}"` : ''}>${highlighted}</code></pre>\n`
+}
+
+// Override fence rule to handle mermaid
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  const info = token.info ? token.info.trim().toLowerCase() : ''
+  
+  // Check if this is a mermaid block
+  if (info === 'mermaid') {
+    const content = token.content.trim()
+    // Return a div with mermaid class and content - mermaid will render it later
+    return `<div class="mermaid" data-line="${token.map ? token.map[0] + 1 : 1}">${md.utils.escapeHtml(content)}</div>\n`
+  }
+  
+  // Use original fence rule for other code blocks
+  return originalFenceRule(tokens, idx, options, env, self)
+}
+
 export function renderMarkdown(content: string, basePath?: string): string {
   const tokens = md.parse(content, {})
   const env: any = {}
