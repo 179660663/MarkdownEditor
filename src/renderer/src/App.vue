@@ -736,11 +736,10 @@ async function handleOpenRecent(path: string) {
   }
 }
 
-function handleJumpToHeading(heading: { line: number }) {
+function handleJumpToHeading(heading: { line: number; index: number }) {
   if (!editorRef.value) return
-
-  // 使用 jumpToLine 方法，根据当前模式自动处理
-  editorRef.value.jumpToLine(heading.line)
+  // 预览模式使用 heading index 跳转，编辑模式使用行号
+  editorRef.value.jumpToLine(heading.line, heading.index)
 }
 
 async function loadOutlinePosition() {

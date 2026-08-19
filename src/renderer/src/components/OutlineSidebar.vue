@@ -51,7 +51,7 @@ interface Heading {
   level: number
   text: string
   line: number
-  index: number
+  index: number // heading 的索引，用于跳转
 }
 
 const props = defineProps<{
@@ -89,7 +89,7 @@ const headings = computed<Heading[]>(() => {
         result.push({
           level,
           text: text || '无标题',
-          line: token.map ? token.map[0] : 0,
+          line: token.map ? token.map[0] + 1 : 1, // 转为 1-indexed
           index: result.length
         })
       }

@@ -318,42 +318,13 @@ function addSourceLineAttributesBrowser(html: string, tokens: any[]): string {
   
   if (!container) return html
   
-  // 收集 token 的行号信息，保持顺序
-  const lineMap: Array<{ tag: string; line: number; index: number }> = []
+  // 为所有标题元素添加 data-line（直接使用索引作为 ID）
+  const headings = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  let headingIndex = 0
   
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i]
-    if (token.map && token.map[0] !== undefined) {
-      const tag = getBlockTagName(token)
-      if (tag) {
-        lineMap.push({ tag, line: token.map[0], index: i })
-      }
-    }
-  }
-  
-  // 为元素添加 data-line 属性
-  const selectors = 'h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, table, hr, ul, ol, .custom-container'
-  const elements = Array.from(container.querySelectorAll(selectors))
-  
-  // 按顺序严格匹配：元素的顺序应该与 token 的顺序一致
-  let elementIndex = 0
-  let tokenIndex = 0
-  
-  while (elementIndex < elements.length && tokenIndex < lineMap.length) {
-    const el = elements[elementIndex]
-    const tagName = el.tagName?.toLowerCase()
-    const className = el.className || ''
-    const info = lineMap[tokenIndex]
-    
-    // 检查是否匹配
-    if (matchesSelector(info.tag, tagName, className)) {
-      el.setAttribute('data-line', String(info.line))
-      elementIndex++
-      tokenIndex++
-    } else {
-      // 不匹配，尝试下一个 token
-      tokenIndex++
-    }
+  for (const heading of headings) {
+    heading.setAttribute('data-heading-id', String(headingIndex))
+    headingIndex++
   }
   
   return container.innerHTML

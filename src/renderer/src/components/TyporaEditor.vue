@@ -35,7 +35,7 @@
       <div
         v-if="flashLineTop >= 0"
         class="jump-line-indicator"
-        :style="{ top: flashLineTop + 'px' }"
+        :style="{ top: flashLineTop + 'px', height: flashLineHeight + 'px' }"
       ></div>
     </div>
 
@@ -202,11 +202,15 @@ let renderTimer: ReturnType<typeof setTimeout> | null = null
 let isRapidTyping = false
 let typingTimer: ReturnType<typeof setTimeout> | null = null
 
+let isJumping = false
+
 watch(() => props.editorMode, (newMode) => {
   mode.value = newMode
   if (newMode === 'edit') {
     nextTick(() => {
-      if (textarea.value) textarea.value.focus()
+      if (textarea.value && !isJumping) {
+        textarea.value.focus()
+      }
     })
   } else {
     if (textarea.value) textarea.value.blur()
@@ -534,40 +538,93 @@ function setCursorToLine(lineNumber: number) {
   })
 }
 
+// 用镜像 div 精确测量目标逻辑行的像素偏移（关键：textarea 开启了 pre-wrap，
+// 长行会软换行成多个视觉行，"行号 × 行高"的算法必然错位，必须按真实排版测量）
+function measureLineTopOffset(ta: HTMLTextAreaElement, lineIndex: number): number {
+  if (lineIndex <= 0) return 0
+  const computed = getComputedStyle(ta)
+  const mirror = document.createElement('div')
+  const s = mirror.style
+  s.position = 'absolute'
+  s.visibility = 'hidden'
+  s.top = '0'
+  s.left = '-9999px'
+  s.boxSizing = 'content-box'
+  // 内容区宽度 = clientWidth - 左右 padding（clientWidth 不含滚动条），保证换行点一致
+  const pl = parseFloat(computed.paddingLeft) || 0
+  const pr = parseFloat(computed.paddingRight) || 0
+  s.width = `${ta.clientWidth - pl - pr}px`
+  s.padding = '0'
+  s.border = 'none'
+  s.fontFamily = computed.fontFamily
+  s.fontSize = computed.fontSize
+  s.fontWeight = computed.fontWeight
+  s.fontStyle = computed.fontStyle
+  s.letterSpacing = computed.letterSpacing
+  s.lineHeight = computed.lineHeight
+  s.tabSize = computed.getPropertyValue('tab-size') || '2'
+  s.whiteSpace = 'pre-wrap'
+  s.wordWrap = 'break-word'
+  s.overflowWrap = computed.overflowWrap
+  s.wordBreak = computed.wordBreak
+
+  const lines = ta.value.split('\n')
+  const before = lines.slice(0, lineIndex).join('\n')
+  mirror.textContent = before + '\n'
+  // 标记元素落在目标行起点，其 offsetTop 即目标行的真实像素位置
+  const marker = document.createElement('span')
+  marker.textContent = '\u200b'
+  mirror.appendChild(marker)
+  document.body.appendChild(mirror)
+  const offset = marker.offsetTop
+  document.body.removeChild(mirror)
+  return offset
+}
+
+let jumpScrollTop = -1
+
 function positionCursorToLine(lineNumber: number) {
   if (!textarea.value) return
-  
+
   const ta = textarea.value
   const lines = ta.value.split('\n')
-  
+
+  // lineNumber 是 1-indexed，光标定位到该行开头
+  const targetLineIndex = Math.min(Math.max(lineNumber - 1, 0), lines.length - 1)
   let charOffset = 0
-  let lineEndOffset = 0
-  for (let i = 0; i < lineNumber && i < lines.length; i++) {
+  for (let i = 0; i < targetLineIndex; i++) {
     charOffset += lines[i].length + 1
   }
-  if (lineNumber < lines.length) {
-    lineEndOffset = charOffset + lines[lineNumber].length
-  } else {
-    lineEndOffset = charOffset
-  }
-  
-  const { lineHeight, paddingTop } = getTextareaMetrics()
-  
-  ta.focus()
-  requestAnimationFrame(() => {
-    ta.selectionStart = charOffset
-    ta.selectionEnd = lineEndOffset
-    
-    const targetScrollTop = Math.max(0, paddingTop + lineNumber * lineHeight)
-    ta.scrollTop = targetScrollTop
 
-    flashLine(lineNumber, lineHeight, paddingTop)
-  })
+  // 先设置光标（此时未聚焦，不会触发自动滚动）
+  ta.selectionStart = charOffset
+  ta.selectionEnd = charOffset
+
+  const { lineHeight, paddingTop } = getTextareaMetrics()
+
+  // 测量目标行的真实像素位置
+  const lineTop = measureLineTopOffset(ta, targetLineIndex)
+
+  // 聚焦但禁止浏览器自动滚动到光标，避免覆盖手动设置的 scrollTop
+  ta.focus({ preventScroll: true })
+
+  // 滚动使标题行位于可视区顶部
+  jumpScrollTop = lineTop
+  ta.scrollTop = lineTop
+
+  // 高亮条按实际 scrollTop 反算，精确落在标题行
+  // （文档末尾 scrollTop 被钳制时，高亮依然和标题同行）
+  flashLineHeight.value = lineHeight
+  flashLineTop.value = paddingTop + lineTop - ta.scrollTop
+  setTimeout(() => {
+    flashLineTop.value = -1
+  }, 1500)
 }
 
 const showJumpHint = ref('')
 let jumpHintTimer: ReturnType<typeof setTimeout> | null = null
 const flashLineTop = ref(-1)
+const flashLineHeight = ref(25.5)
 
 function getTextareaMetrics(): { lineHeight: number; paddingTop: number } {
   const ta = textarea.value
@@ -584,16 +641,6 @@ function getTextareaMetrics(): { lineHeight: number; paddingTop: number } {
 
 function getTextareaLineHeight(): number {
   return getTextareaMetrics().lineHeight
-}
-
-function flashLine(lineNumber: number, lineHeight: number, paddingTop: number) {
-  const ta = textarea.value
-  if (!ta) return
-  
-  flashLineTop.value = paddingTop + lineNumber * lineHeight - ta.scrollTop
-  setTimeout(() => {
-    flashLineTop.value = -1
-  }, 1500)
 }
 
 function highlightHeading(el: HTMLElement, lineNumber: number) {
@@ -629,69 +676,35 @@ function highlightHeading(el: HTMLElement, lineNumber: number) {
   }, 2000)
 }
 
-function jumpToLine(lineNumber: number) {
+function jumpToLine(lineNumber: number, headingIndex?: number) {
   if (mode.value === 'preview') {
     const previewLayer = overlay.value
     if (!previewLayer) return
     
-    const targetElement = previewLayer.querySelector(`[data-line="${lineNumber}"]`) as HTMLElement | null
-    
-    if (targetElement) {
-      // 计算元素相对于容器的滚动位置
-      const doScroll = () => {
-        // 使用 getBoundingClientRect 计算相对于视口的位置
-        const containerRect = previewLayer.getBoundingClientRect()
-        const elementRect = targetElement.getBoundingClientRect()
-        
-        // 计算元素在容器内的相对位置
-        const relativeTop = elementRect.top - containerRect.top + previewLayer.scrollTop
-        
-        previewLayer.scrollTop = relativeTop
+    // 如果有 headingIndex，使用 data-heading-id 查找（最可靠）
+    if (headingIndex !== undefined) {
+      const targetElement = previewLayer.querySelector(`[data-heading-id="${headingIndex}"]`) as HTMLElement | null
+      if (targetElement) {
+        targetElement.scrollIntoView({ block: 'start', behavior: 'instant' })
         highlightHeading(targetElement, lineNumber)
+        return
       }
-      
-      // 立即滚动
-      doScroll()
-      
-      // 监听图片加载，图片加载后重新计算位置
-      const images = previewLayer.querySelectorAll('img')
-      const unloadedImages = Array.from(images).filter((img) => !(img as HTMLImageElement).complete)
-      
-      if (unloadedImages.length > 0) {
-        let loadedCount = 0
-        const totalImages = unloadedImages.length
-        
-        const onImageLoad = () => {
-          loadedCount++
-          // 每个图片加载都重新计算位置
-          doScroll()
-        }
-        
-        unloadedImages.forEach((img) => {
-          img.addEventListener('load', onImageLoad, { once: true })
-          img.addEventListener('error', onImageLoad, { once: true })
-        })
-      }
-    } else {
-      const totalLines = content.value.split('\n').length
-      const ratio = totalLines > 0 ? lineNumber / totalLines : 0
-      const targetScrollTop = ratio * previewLayer.scrollHeight
-      
-      previewLayer.scrollTop = Math.max(0, targetScrollTop)
-      showJumpHint.value = `已跳转到第 ${lineNumber} 行`
-      if (jumpHintTimer) clearTimeout(jumpHintTimer)
-      jumpHintTimer = setTimeout(() => {
-        showJumpHint.value = ''
-      }, 2000)
     }
+    
+    // 最后按比例估算
+    const totalLines = content.value.split('\n').length
+    const ratio = totalLines > 0 ? lineNumber / totalLines : 0
+    previewLayer.scrollTop = ratio * previewLayer.scrollHeight
   } else {
+    // 编辑模式：定位到对应行
     positionCursorToLine(lineNumber)
-    showJumpHint.value = `已跳转到第 ${lineNumber} 行`
-    if (jumpHintTimer) clearTimeout(jumpHintTimer)
-    jumpHintTimer = setTimeout(() => {
-      showJumpHint.value = ''
-    }, 2000)
   }
+  
+  showJumpHint.value = `已跳转到第 ${lineNumber} 行`
+  if (jumpHintTimer) clearTimeout(jumpHintTimer)
+  jumpHintTimer = setTimeout(() => {
+    showJumpHint.value = ''
+  }, 2000)
 }
 
 function handleInput() {
@@ -708,7 +721,12 @@ function handleTextareaScroll() {
     syncOverlay.value.scrollTop = textarea.value.scrollTop
   }
   checkScrollTop()
-  if (flashLineTop.value >= 0) {
+  // 用户手动滚动时才隐藏高亮；程序设置 scrollTop 触发的 scroll 事件不清除
+  if (
+    flashLineTop.value >= 0 &&
+    textarea.value &&
+    Math.abs(textarea.value.scrollTop - jumpScrollTop) > 2
+  ) {
     flashLineTop.value = -1
   }
 }
@@ -1500,7 +1518,7 @@ defineExpose({
   position: absolute;
   left: 0;
   width: 3px;
-  height: 25px;
+  height: 25.5px;
   background: var(--accent, #569cd6);
   animation: indicator-flash 1.5s ease-out forwards;
   pointer-events: none;
@@ -1510,14 +1528,12 @@ defineExpose({
 @keyframes indicator-flash {
   0% {
     opacity: 1;
-    height: 25px;
   }
   50% {
     opacity: 0.6;
   }
   100% {
     opacity: 0;
-    height: 50px;
   }
 }
 
