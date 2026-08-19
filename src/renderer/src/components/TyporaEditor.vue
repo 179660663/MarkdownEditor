@@ -685,6 +685,8 @@ function jumpToLine(lineNumber: number, headingIndex?: number) {
     if (headingIndex !== undefined) {
       const targetElement = previewLayer.querySelector(`[data-heading-id="${headingIndex}"]`) as HTMLElement | null
       if (targetElement) {
+        // 留出 8px 上边距，让高亮框的 outline 能完整显示
+        targetElement.style.scrollMarginTop = '8px'
         targetElement.scrollIntoView({ block: 'start', behavior: 'instant' })
         highlightHeading(targetElement, lineNumber)
         return
