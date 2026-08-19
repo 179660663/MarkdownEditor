@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
 import { join, relative, basename, extname, resolve, dirname, normalize } from 'node:path'
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import Store from 'electron-store'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -777,4 +777,77 @@ ipcMain.handle('show-save-confirm-dialog', async (_event, fileName: string) => {
   // 0 = 保存, 1 = 不保存, 2 = 取消
   const actions = ['save', 'dontSave', 'cancel']
   return actions[result.response]
+})
+
+// 图片保存模式：assets（./assets）| filename-assets（./文件名.assets）| custom（指定路径）| base64（不保存文件）
+interface SaveImageArgs {
+  docPath?: string
+  fileName: string
+  data: ArrayBuffer
+  mode: 'assets' | 'filename-assets' | 'custom'
+  customPath?: string
+}
+
+ipcMain.handle('save-image', async (_event, args: SaveImageArgs) => {
+  try {
+    const { docPath, fileName, data, mode, customPath } = args
+
+    // 确定目标目录
+    let targetDir: string
+    if (mode === 'custom') {
+      if (!customPath) return null
+      targetDir = customPath
+    } else {
+      // 相对目录模式必须依赖已保存的文档路径
+      if (!docPath) return null
+      const docDir = dirname(docPath)
+      const docName = basename(docPath, extname(docPath))
+      const folderName = mode === 'filename-assets' ? `${docName}.assets` : 'assets'
+      targetDir = join(docDir, folderName)
+    }
+
+    // 确保目录存在
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true })
+    }
+
+    // 文件名去重
+    const ext = extname(fileName) || '.png'
+    const nameBase = basename(fileName, ext)
+    let finalName = fileName
+    let counter = 1
+    while (existsSync(join(targetDir, finalName))) {
+      finalName = `${nameBase}-${counter}${ext}`
+      counter++
+    }
+
+    const fullPath = join(targetDir, finalName)
+    writeFileSync(fullPath, Buffer.from(data))
+    console.log('[Image] Saved:', fullPath)
+
+    // 计算插入 markdown 的路径
+    let insertPath: string
+    if (docPath) {
+      // 优先使用相对路径
+      let rel = relative(dirname(docPath), fullPath).replace(/\\/g, '/')
+      if (/^[a-zA-Z]:\//.test(rel)) {
+        // 跨盘符，relative 返回绝对路径
+        insertPath = rel
+      } else {
+        if (!rel.startsWith('.')) rel = './' + rel
+        insertPath = rel
+      }
+    } else {
+      // 未保存文档 + custom 模式：使用绝对路径
+      insertPath = fullPath.replace(/\\/g, '/')
+    }
+
+    // 将空格编码为 %20，避免破坏 markdown 图片语法解析
+    insertPath = insertPath.replace(/ /g, '%20')
+
+    return { savedPath: fullPath, insertPath }
+  } catch (err) {
+    console.error('[Image] Failed to save image:', err)
+    return null
+  }
 })

@@ -35,5 +35,12 @@ interface Window {
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) => Promise<boolean>
     loadFolders: () => Promise<{ path: string; name: string; collapsed: boolean }[]>
     showSaveConfirmDialog: (fileName: string) => Promise<'save' | 'dontSave' | 'cancel'>
+    saveImage: (args: {
+      docPath?: string
+      fileName: string
+      data: ArrayBuffer
+      mode: 'assets' | 'filename-assets' | 'custom'
+      customPath?: string
+    }) => Promise<{ savedPath: string; insertPath: string } | null>
   }
 }

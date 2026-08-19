@@ -29,7 +29,14 @@ try {
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) =>
       ipcRenderer.invoke('save-folders', folders),
     loadFolders: () => ipcRenderer.invoke('load-folders'),
-    showSaveConfirmDialog: (fileName: string) => ipcRenderer.invoke('show-save-confirm-dialog', fileName)
+    showSaveConfirmDialog: (fileName: string) => ipcRenderer.invoke('show-save-confirm-dialog', fileName),
+    saveImage: (args: {
+      docPath?: string
+      fileName: string
+      data: ArrayBuffer
+      mode: 'assets' | 'filename-assets' | 'custom'
+      customPath?: string
+    }) => ipcRenderer.invoke('save-image', args)
   })
   console.log('[Preload] electronAPI exposed successfully')
 } catch (err) {

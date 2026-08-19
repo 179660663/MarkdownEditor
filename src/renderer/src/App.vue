@@ -49,6 +49,11 @@
             <span class="dropdown-icon">📋</span> 另存为
             <span class="shortcut">Ctrl+Shift+S</span>
           </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item" @click="showPreferences = true; closeMenu()">
+            <span class="dropdown-icon">⚙️</span> 偏好设置
+            <span class="shortcut">Ctrl+,</span>
+          </div>
         </div>
       </div>
       <span class="file-path" v-if="store.currentFilePath">
@@ -311,6 +316,8 @@
       :is-dirty="store.isDirty"
     />
 
+    <PreferencesDialog v-if="showPreferences" @close="showPreferences = false" />
+
     <teleport to="body">
       <div
         v-if="folderContextMenu.visible"
@@ -338,6 +345,7 @@ import TabBar from './components/TabBar.vue'
 import OutlineSidebar from './components/OutlineSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FolderTree from './components/FolderTree.vue'
+import PreferencesDialog from './components/PreferencesDialog.vue'
 
 interface FileNode {
   name: string
@@ -357,6 +365,7 @@ const isMaximized = ref(false)
 const isLoading = ref(true)
 const appError = ref<string | null>(null)
 const outlinePosition = ref<'left' | 'right'>('right')
+const showPreferences = ref(false)
 
 const sidebarWidth = ref(240)
 const outlineWidth = ref(220)
@@ -777,6 +786,13 @@ async function handleGlobalKeyDown(e: KeyboardEvent) {
   }
 
   const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+
+  // Ctrl/Cmd + ,: 打开偏好设置（全局可用）
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+    e.preventDefault()
+    showPreferences.value = true
+    return
+  }
 
   // 搜索框打开时的导航快捷键（全局处理）
   if (editorRef.value?.getSearchBoxVisible?.()) {

@@ -1274,16 +1274,93 @@ function openImageInFolder() {
   }
 }
 
+// 生成 Typora 风格的时间戳文件名：image-YYYYMMDDHHmmssSSS
+function formatImageTimestamp(d: Date): string {
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}${pad(d.getMilliseconds(), 3)}`
+}
+
+function getImageExtFromMime(mime: string): string {
+  const map: Record<string, string> = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+    'image/svg+xml': '.svg',
+    'image/avif': '.avif'
+  }
+  return map[mime] || '.png'
+}
+
+function showToastHint(text: string) {
+  showJumpHint.value = text
+  if (jumpHintTimer) clearTimeout(jumpHintTimer)
+  jumpHintTimer = setTimeout(() => {
+    showJumpHint.value = ''
+  }, 3000)
+}
+
 async function insertImages(files: File[]) {
   const imagesMarkdown: string[] = []
+  let base64FallbackCount = 0
 
-  for (const file of files) {
-    const base64 = await readFileAsBase64(file)
-    imagesMarkdown.push(`\n![${file.name || 'image'}](${base64})\n`)
+  // 读取图片保存偏好设置
+  let saveMode: 'assets' | 'filename-assets' | 'custom' | 'base64' = 'assets'
+  let customPath = ''
+  try {
+    const config = await window.electronAPI.getConfig()
+    const mode = config.imageSaveMode as string | undefined
+    if (mode === 'assets' || mode === 'filename-assets' || mode === 'custom' || mode === 'base64') {
+      saveMode = mode
+    }
+    customPath = (config.imageSavePath as string | undefined) || ''
+  } catch (err) {
+    console.warn('[Image] Failed to load preferences, using defaults:', err)
+  }
+
+  for (const [index, file] of files.entries()) {
+    let inserted = false
+
+    if (saveMode !== 'base64') {
+      try {
+        const ext = getImageExtFromMime(file.type)
+        const fileName = `image-${formatImageTimestamp(new Date(Date.now() + index))}${ext}`
+        const data = await file.arrayBuffer()
+        const result = await window.electronAPI.saveImage({
+          docPath: props.filePath,
+          fileName,
+          data,
+          mode: saveMode,
+          customPath
+        })
+        if (result) {
+          imagesMarkdown.push(`\n![${fileName}](${result.insertPath})\n`)
+          inserted = true
+        }
+      } catch (err) {
+        console.error('[Image] Failed to save pasted image:', err)
+      }
+    }
+
+    // 回退：嵌入 base64
+    if (!inserted) {
+      const base64 = await readFileAsBase64(file)
+      imagesMarkdown.push(`\n![${file.name || 'image'}](${base64})\n`)
+      if (saveMode !== 'base64') base64FallbackCount++
+    }
   }
 
   if (textarea.value) {
     insertAtCursor(textarea.value, imagesMarkdown.join(''))
+  }
+
+  if (base64FallbackCount > 0) {
+    if (!props.filePath) {
+      showToastHint('文档尚未保存，图片已以 Base64 嵌入')
+    } else {
+      showToastHint('图片保存失败，已以 Base64 嵌入')
+    }
   }
 }
 

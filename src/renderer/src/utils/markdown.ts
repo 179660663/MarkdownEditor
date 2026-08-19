@@ -165,10 +165,8 @@ export function renderMarkdown(content: string, basePath?: string): string {
   // Add data-line attributes
   html = addSourceLineAttributes(html, tokens)
   
-  // Resolve image paths if basePath is provided
-  if (basePath) {
-    html = resolveMarkdownImages(html, basePath)
-  }
+  // Resolve image paths (absolute paths work even without basePath)
+  html = resolveMarkdownImages(html, basePath || '')
   
   return html
 }
@@ -176,6 +174,14 @@ export function renderMarkdown(content: string, basePath?: string): string {
 /**
  * Resolve relative image paths to md-local:// protocol URLs
  */
+function decodeURIComponentSafe(str: string): string {
+  try {
+    return decodeURIComponent(str)
+  } catch {
+    return str
+  }
+}
+
 function resolveMarkdownImages(html: string, basePath: string): string {
   if (typeof window === 'undefined' || !window.DOMParser) {
     return html
@@ -199,6 +205,11 @@ function resolveMarkdownImages(html: string, basePath: string): string {
           src.startsWith('https://') || 
           src.startsWith('data:') || 
           src.startsWith('md-local://')) {
+        continue
+      }
+      
+      // 无 basePath 时仅处理绝对路径
+      if (!basePath && !/^[a-zA-Z]:[\\/]/.test(decodeURIComponentSafe(src))) {
         continue
       }
       
@@ -232,7 +243,12 @@ function resolveImagePath(relPath: string, basePath: string): string | null {
       // If decoding fails, use original path
       console.log('[Image] Decode failed, using original:', relPath)
     }
-    
+
+    // 绝对路径（Windows 盘符或以 / 开头）直接返回
+    if (/^[a-zA-Z]:[\\/]/.test(decodedRel)) {
+      return decodedRel.replace(/\\/g, '/')
+    }
+
     // Normalize path separators - convert all to forward slashes first
     let normalizedBase = basePath.replace(/\\/g, '/').replace(/\/+$/, '')
     let normalizedRel = decodedRel.replace(/\\/g, '/')
