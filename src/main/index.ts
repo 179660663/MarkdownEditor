@@ -7,6 +7,16 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import * as jschardet from 'jschardet'
 import * as iconv from 'iconv-lite'
 
+// 设置控制台代码页为 UTF-8（Windows）
+if (process.platform === 'win32') {
+  try {
+    const { execSync } = require('node:child_process')
+    execSync('chcp 65001', { stdio: 'ignore' })
+  } catch {
+    // 忽略错误
+  }
+}
+
 interface RecentFile {
   path: string
   title: string
@@ -69,7 +79,7 @@ function setupProtocolHandler() {
   protocol.registerBufferProtocol('md-local', (request, callback) => {
     try {
       const url = new URL(request.url)
-      console.log('[md-local] Full URL:', request.url)
+      console.log('[md-local] Full URL:', decodeURIComponent(request.url))
       
       // Get path from query parameter (more reliable for Windows paths)
       let filePath = url.searchParams.get('path')

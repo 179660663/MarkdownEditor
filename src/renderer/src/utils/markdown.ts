@@ -208,7 +208,7 @@ function resolveMarkdownImages(html: string, basePath: string): string {
         // Encode the entire path as a query parameter to avoid Windows path issues
         const encodedPath = encodeURIComponent(resolvedPath)
         img.setAttribute('src', `md-local://local?path=${encodedPath}`)
-        console.log('[Image] Resolved:', src, '->', `md-local://local?path=${encodedPath}`)
+        console.log('[Image] Resolved:', decodeURIComponent(src), '->', `md-local://local?path=${decodeURIComponent(encodedPath)}`)
       }
     }
     
@@ -241,11 +241,12 @@ function resolveImagePath(relPath: string, basePath: string): string | null {
     normalizedRel = normalizedRel.replace(/^\.\//, '')
     normalizedRel = normalizedRel.replace(/^\/+/, '')
     
-    console.log('[Image] Path parts - base:', normalizedBase, 'rel:', normalizedRel)
+    // 调试日志在需要时取消注释
+    // console.log('[Image] Path parts - base:', normalizedBase, 'rel:', normalizedRel)
     
     // Handle ./ and ../ paths
     const fullPath = joinPaths(normalizedBase, normalizedRel)
-    console.log('[Image] Resolved:', relPath, '-> decoded:', decodedRel, '->', fullPath)
+    console.log('[Image] Resolved:', decodeURIComponent(relPath), '-> decoded:', decodedRel, '->', fullPath)
     return fullPath
   } catch (err) {
     console.error('[Image] Path resolution error:', err)
