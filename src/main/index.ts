@@ -4,6 +4,8 @@ import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import Store from 'electron-store'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import * as jschardet from 'jschardet'
+import * as iconv from 'iconv-lite'
 
 interface RecentFile {
   path: string
@@ -358,7 +360,7 @@ ipcMain.handle('open-file', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return null
   const filePath = result.filePaths[0]
-  const content = readFileSync(filePath, 'utf-8')
+  const content = readFileWithEncoding(filePath)
   return { path: filePath, content }
 })
 
@@ -382,6 +384,61 @@ interface FileNode {
   path: string
   isDirectory: boolean
   children?: FileNode[]
+}
+
+/**
+ * 检测文件编码并读取内容
+ * 支持 UTF-8、GBK、GB2312、GB18030、Big5 等中文编码
+ */
+function readFileWithEncoding(filePath: string): string {
+  // 首先以 Buffer 方式读取文件
+  const buffer = readFileSync(filePath)
+
+  // 使用 jschardet 检测编码
+  const detection = jschardet.detect(buffer)
+  const encoding = detection.encoding?.toLowerCase() || 'utf-8'
+  const confidence = detection.confidence || 0
+
+  console.log(`[Encoding] Detected encoding for ${filePath}: ${encoding} (confidence: ${confidence})`)
+
+  // 如果检测到的编码是 UTF-8，直接返回
+  if (encoding === 'utf-8' || encoding === 'ascii') {
+    return buffer.toString('utf-8')
+  }
+
+  // 对于中文编码，使用 iconv-lite 转换
+  const supportedEncodings = ['gbk', 'gb2312', 'gb18030', 'big5', 'shift_jis', 'euc-jp', 'euc-kr', 'windows-1252', 'iso-8859-1']
+
+  if (supportedEncodings.includes(encoding)) {
+    try {
+      const content = iconv.decode(buffer, encoding)
+      console.log(`[Encoding] Converted from ${encoding} to UTF-8`)
+      return content
+    } catch (err) {
+      console.error(`[Encoding] Failed to convert from ${encoding}, falling back to UTF-8:`, err)
+      return buffer.toString('utf-8')
+    }
+  }
+
+  // 编码不确定或置信度低时，尝试用 UTF-8，如果失败则尝试 GBK
+  if (confidence < 0.5) {
+    try {
+      // 先尝试 UTF-8
+      const utf8Content = buffer.toString('utf-8')
+      // 简单检查是否有乱码特征（替换字符）
+      if (!utf8Content.includes('\uFFFD')) {
+        return utf8Content
+      }
+      // 有乱码，尝试 GBK
+      console.log('[Encoding] UTF-8 has replacement chars, trying GBK')
+      return iconv.decode(buffer, 'gbk')
+    } catch {
+      return iconv.decode(buffer, 'gbk')
+    }
+  }
+
+  // 默认使用 UTF-8
+  return buffer.toString('utf-8')
 }
 
 async function buildFolderTree(folderPath: string, basePath: string, depth: number = 0): Promise<FileNode[]> {
@@ -481,7 +538,7 @@ ipcMain.handle('clear-recent-files', () => {
 
 ipcMain.handle('read-file', (_event, filePath: string) => {
   if (!filePath || !existsSync(filePath)) return null
-  const content = readFileSync(filePath, 'utf-8')
+  const content = readFileWithEncoding(filePath)
   return { path: filePath, content }
 })
 
