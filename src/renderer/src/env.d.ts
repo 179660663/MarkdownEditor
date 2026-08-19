@@ -30,8 +30,10 @@ interface Window {
     windowMinimize: () => Promise<void>
     windowMaximize: () => Promise<void>
     windowClose: () => Promise<void>
+    openExternal: (url: string) => Promise<boolean>
     showItemInFolder: (basePath: string, relPath: string) => Promise<boolean>
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) => Promise<boolean>
     loadFolders: () => Promise<{ path: string; name: string; collapsed: boolean }[]>
+    showSaveConfirmDialog: (fileName: string) => Promise<'save' | 'dontSave' | 'cancel'>
   }
 }

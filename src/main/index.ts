@@ -216,6 +216,74 @@ async function createWindow() {
     win = null
   })
 
+  // 窗口关闭前检查是否有未保存的文档
+  win.on('close', async (e) => {
+    if (!win) return
+    
+    // 阻止默认关闭行为
+    e.preventDefault()
+    
+    // 向渲染进程询问是否有未保存的文档
+    try {
+      const hasUnsaved = await win.webContents.executeJavaScript(`
+        (function() {
+          const store = window.__editorStore__
+          if (!store) return { hasUnsaved: false, count: 0 }
+          const dirtyDocs = store.getDirtyDocuments()
+          return { 
+            hasUnsaved: dirtyDocs.length > 0, 
+            count: dirtyDocs.length,
+            docs: dirtyDocs.map(d => ({ id: d.id, title: d.title }))
+          }
+        })()
+      `)
+      
+      if (hasUnsaved.hasUnsaved) {
+        let shouldClose = true
+        
+        // 逐个确认未保存的文档
+        for (const doc of hasUnsaved.docs) {
+          const result = await dialog.showMessageBox(win, {
+            type: 'question',
+            buttons: ['保存', '不保存', '取消'],
+            defaultId: 0,
+            cancelId: 2,
+            title: '未保存的更改',
+            message: `是否保存对 "${doc.title}" 的更改？`,
+            detail: '如果不保存，您的更改将丢失。'
+          })
+          
+          if (result.response === 2) { // 取消
+            shouldClose = false
+            break
+          } else if (result.response === 0) { // 保存
+            // 通知渲染进程保存该文档
+            await win.webContents.executeJavaScript(`
+              (async function() {
+                const store = window.__editorStore__
+                if (store) {
+                  store.setActiveTab('${doc.id}')
+                  await store.saveFileAction(store.getDocument('${doc.id}')?.content || '')
+                }
+              })()
+            `)
+          }
+          // result.response === 1 表示不保存，继续下一个
+        }
+        
+        if (shouldClose) {
+          win.destroy() // 强制关闭窗口
+        }
+      } else {
+        win.destroy() // 没有未保存的文档，直接关闭
+      }
+    } catch (err) {
+      console.error('[Main] Error checking unsaved documents:', err)
+      // 出错时直接关闭窗口
+      win.destroy()
+    }
+  })
+
   win.on('move', () => {
     if (win && store) store.set('windowBounds', win.getBounds())
   })
@@ -628,4 +696,20 @@ ipcMain.handle('save-folders', (_event, folders: { path: string; name: string; c
 ipcMain.handle('load-folders', () => {
   if (!store) return []
   return store.get('folders', [])
+})
+
+ipcMain.handle('show-save-confirm-dialog', async (_event, fileName: string) => {
+  if (!win) return 'cancel'
+  const result = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['保存', '不保存', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    title: '未保存的更改',
+    message: `是否保存对 "${fileName}" 的更改？`,
+    detail: '如果不保存，您的更改将丢失。'
+  })
+  // 0 = 保存, 1 = 不保存, 2 = 取消
+  const actions = ['save', 'dontSave', 'cancel']
+  return actions[result.response]
 })

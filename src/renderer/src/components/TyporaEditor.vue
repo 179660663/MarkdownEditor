@@ -88,6 +88,31 @@
       <div v-if="showJumpHint" class="jump-hint">{{ showJumpHint }}</div>
     </Transition>
 
+    <!-- 内容搜索框 -->
+    <Transition name="search-box">
+      <div v-if="showSearchBox" class="content-search-box">
+        <input
+          ref="searchInput"
+          v-model="searchQuery"
+          type="text"
+          class="content-search-input"
+          placeholder="搜索内容..."
+          @keydown.enter.prevent="findNext"
+          @keydown.shift.enter.prevent="findPrev"
+          @keydown.esc.prevent="closeSearchBox"
+        />
+        <span v-if="searchMatchCount > 0" class="content-search-count">
+          {{ searchCurrentMatch + 1 }}/{{ searchMatchCount }}
+        </span>
+        <span v-else-if="searchQuery" class="content-search-count no-match">
+          无匹配
+        </span>
+        <button class="content-search-btn" title="上一个 (Shift+Enter)" @click="findPrev">↑</button>
+        <button class="content-search-btn" title="下一个 (Enter)" @click="findNext">↓</button>
+        <button class="content-search-btn close" title="关闭 (Esc)" @click="closeSearchBox">✕</button>
+      </div>
+    </Transition>
+
     <!-- 图片预览模态框 -->
     <Teleport to="body">
       <Transition name="image-preview">
@@ -367,6 +392,10 @@ function enterPreviewMode() {
   renderedContent.value = renderMarkdownContent(content.value)
   nextTick(() => {
     renderMermaidDiagrams()
+    // 如果有搜索词，重新渲染搜索高亮
+    if (showSearchBox.value && searchQuery.value) {
+      highlightSearchMatches()
+    }
     // DOM 更新完成后，延迟让预览层获得焦点
     setTimeout(() => {
       scrollToSourceLine(savedLine)
@@ -605,6 +634,14 @@ let jumpHintTimer: ReturnType<typeof setTimeout> | null = null
 const flashLineTop = ref(-1)
 const flashLineHeight = ref(25.5)
 
+// 内容搜索相关
+const showSearchBox = ref(false)
+const searchQuery = ref('')
+const searchCurrentMatch = ref(0)
+const searchMatchCount = ref(0)
+const searchInput = ref<HTMLInputElement | null>(null)
+let searchMarkers: { start: number; end: number }[] = []
+
 function getTextareaMetrics(): { lineHeight: number; paddingTop: number } {
   const ta = textarea.value
   if (!ta) return { lineHeight: 25.5, paddingTop: 24 }
@@ -719,6 +756,13 @@ function handleTextareaScroll() {
 
 function handleKeydown(e: KeyboardEvent) {
   if (!textarea.value) return
+
+  // 如果搜索框打开，让搜索框处理 Enter 和 Esc 键
+  if (showSearchBox.value) {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      return
+    }
+  }
 
   const ta = textarea.value
 
@@ -861,24 +905,31 @@ function handleKeydown(e: KeyboardEvent) {
   }
 
   if (e.key === 'Home' && !e.shiftKey) {
-    e.preventDefault()
-    const start = ta.selectionStart
-    const value = ta.value
-    const lineStart = value.lastIndexOf('\n', start - 1) + 1
-    ta.selectionStart = ta.selectionEnd = lineStart
-    return
-  }
+      e.preventDefault()
+      const start = ta.selectionStart
+      const value = ta.value
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1
+      ta.selectionStart = ta.selectionEnd = lineStart
+      return
+    }
 
-  if (e.key === 'End' && !e.shiftKey) {
-    e.preventDefault()
-    const start = ta.selectionStart
-    const value = ta.value
-    const lineEnd = value.indexOf('\n', start)
-    const endPos = lineEnd === -1 ? value.length : lineEnd
-    ta.selectionStart = ta.selectionEnd = endPos
-    return
+    if (e.key === 'End' && !e.shiftKey) {
+      e.preventDefault()
+      const start = ta.selectionStart
+      const value = ta.value
+      const lineEnd = value.indexOf('\n', start)
+      const endPos = lineEnd === -1 ? value.length : lineEnd
+      ta.selectionStart = ta.selectionEnd = endPos
+      return
+    }
+
+    // Ctrl+F: 打开搜索框
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault()
+      openSearchBox()
+      return
+    }
   }
-}
 
 function selectNextOccurrence(ta: HTMLTextAreaElement) {
   const start = ta.selectionStart
@@ -1070,6 +1121,260 @@ function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
+// 内容搜索功能
+function openSearchBox() {
+  showSearchBox.value = true
+  // 如果有选中的文本，将其放入搜索框
+  nextTick(() => {
+    if (searchInput.value) {
+      searchInput.value.focus()
+      // 如果有选中文本，使用选中的文本作为搜索词
+      if (textarea.value) {
+        const selectedText = textarea.value.value.substring(
+          textarea.value.selectionStart,
+          textarea.value.selectionEnd
+        )
+        if (selectedText && selectedText.length < 100) {
+          searchQuery.value = selectedText
+          updateSearchMarkers()
+        }
+      }
+      searchInput.value.select()
+    }
+  })
+}
+
+function closeSearchBox() {
+  showSearchBox.value = false
+  searchQuery.value = ''
+  clearSearchHighlights()
+  // 返回焦点到编辑器
+  if (mode.value === 'edit' && textarea.value) {
+    textarea.value.focus()
+  } else if (mode.value === 'preview' && overlay.value) {
+    overlay.value.focus()
+  }
+}
+
+function updateSearchMarkers() {
+  const query = searchQuery.value
+  if (!query) {
+    searchMatchCount.value = 0
+    searchCurrentMatch.value = 0
+    searchMarkers = []
+    clearSearchHighlights()
+    return
+  }
+
+  // 搜索词变化，需要重新创建高亮
+  searchHighlightInitialized = false
+
+  const text = content.value
+  searchMarkers = []
+  let index = text.toLowerCase().indexOf(query.toLowerCase())
+  while (index !== -1) {
+    searchMarkers.push({ start: index, end: index + query.length })
+    index = text.toLowerCase().indexOf(query.toLowerCase(), index + 1)
+  }
+
+  searchMatchCount.value = searchMarkers.length
+  if (searchCurrentMatch.value >= searchMatchCount.value) {
+    searchCurrentMatch.value = searchMatchCount.value > 0 ? 0 : 0
+  }
+
+  highlightSearchMatches()
+}
+
+// 存储已高亮的标记，避免重复创建
+let searchHighlightInitialized = false
+
+function highlightSearchMatches() {
+  // 仅在预览模式下高亮搜索匹配项
+  if (mode.value !== 'preview' || !overlay.value) return
+
+  if (!searchQuery.value || searchMarkers.length === 0) {
+    clearSearchHighlights()
+    return
+  }
+
+  // 如果已经初始化过，只更新当前选中项的样式
+  if (searchHighlightInitialized) {
+    updateCurrentSearchHighlight()
+    return
+  }
+
+  // 首次高亮：创建所有 mark 元素
+  clearSearchHighlights()
+
+  // 获取所有文本节点
+  const walker = document.createTreeWalker(
+    overlay.value,
+    NodeFilter.SHOW_TEXT,
+    null,
+    false
+  )
+  const textNodes: Text[] = []
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    textNodes.push(node as Text)
+  }
+
+  // 在文本节点中查找匹配并高亮
+  const query = searchQuery.value.toLowerCase()
+  let globalOffset = 0
+  let matchCounter = 0
+
+  textNodes.forEach((textNode) => {
+    const text = textNode.textContent || ''
+    const lowerText = text.toLowerCase()
+    let matchIndex = lowerText.indexOf(query)
+
+    if (matchIndex !== -1) {
+      const parent = textNode.parentNode
+      if (!parent) return
+
+      const fragment = document.createDocumentFragment()
+      let lastIndex = 0
+
+      while (matchIndex !== -1) {
+        // 添加匹配前的文本
+        if (matchIndex > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.substring(lastIndex, matchIndex)))
+          globalOffset += matchIndex - lastIndex
+        }
+
+        // 创建高亮标记
+        const mark = document.createElement('mark')
+        mark.className = 'search-highlight'
+
+        // 标记这是第几个匹配项
+        mark.dataset.searchIndex = String(matchCounter)
+
+        // 检查这是否是当前选中的匹配项
+        if (matchCounter === searchCurrentMatch.value) {
+          mark.classList.add('current')
+        }
+
+        mark.textContent = text.substring(matchIndex, matchIndex + query.length)
+        fragment.appendChild(mark)
+
+        globalOffset += query.length
+        lastIndex = matchIndex + query.length
+        matchIndex = lowerText.indexOf(query, lastIndex)
+        matchCounter++
+      }
+
+      // 添加剩余的文本
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.substring(lastIndex)))
+        globalOffset += text.length - lastIndex
+      }
+
+      parent.replaceChild(fragment, textNode)
+    } else {
+      globalOffset += text.length
+    }
+  })
+
+  searchHighlightInitialized = true
+}
+
+function updateCurrentSearchHighlight() {
+  if (!overlay.value) return
+
+  // 移除所有 current 类
+  const marks = overlay.value.querySelectorAll('mark.search-highlight')
+  marks.forEach((mark) => {
+    mark.classList.remove('current')
+  })
+
+  // 给当前匹配项添加 current 类
+  const currentMark = overlay.value.querySelector(`mark.search-highlight[data-search-index="${searchCurrentMatch.value}"]`) as HTMLElement | null
+  if (currentMark) {
+    currentMark.classList.add('current')
+  }
+}
+
+function getTextOffset(textNode: Text, offsetInNode: number): number {
+  let offset = 0
+  const walker = document.createTreeWalker(
+    overlay.value!,
+    NodeFilter.SHOW_TEXT,
+    null,
+    false
+  )
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    if (node === textNode) {
+      return offset + offsetInNode
+    }
+    offset += node.textContent?.length || 0
+  }
+  return offset
+}
+
+function clearSearchHighlights() {
+  if (!overlay.value) return
+  const marks = overlay.value.querySelectorAll('mark.search-highlight')
+  marks.forEach((mark) => {
+    const parent = mark.parentNode
+    if (parent) {
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
+      parent.normalize()
+    }
+  })
+  searchHighlightInitialized = false
+}
+
+function scrollToCurrentMatch() {
+  if (searchMarkers.length === 0 || !overlay.value) return
+
+  // 在预览模式下滚动到当前匹配项
+  const currentMark = overlay.value.querySelector('mark.search-highlight.current') as HTMLElement | null
+  if (currentMark) {
+    currentMark.scrollIntoView({ behavior: 'instant', block: 'center' })
+  }
+}
+
+function findNext() {
+  if (searchMarkers.length === 0) return
+  searchCurrentMatch.value = (searchCurrentMatch.value + 1) % searchMarkers.length
+  navigateToMatch()
+}
+
+function findPrev() {
+  if (searchMarkers.length === 0) return
+  searchCurrentMatch.value = (searchCurrentMatch.value - 1 + searchMarkers.length) % searchMarkers.length
+  navigateToMatch()
+}
+
+function navigateToMatch() {
+  if (searchMarkers.length === 0) return
+  const marker = searchMarkers[searchCurrentMatch.value]
+
+  if (mode.value === 'edit' && textarea.value) {
+    // 编辑模式：选中匹配的文本
+    textarea.value.focus()
+    textarea.value.selectionStart = marker.start
+    textarea.value.selectionEnd = marker.end
+    // 滚动到选中的位置
+    const text = textarea.value.value.substring(0, marker.start)
+    const lines = text.split('\n')
+    const lineIndex = lines.length - 1
+    const lineTop = measureLineTopOffset(textarea.value, lineIndex)
+    textarea.value.scrollTop = lineTop
+  } else if (mode.value === 'preview' && overlay.value) {
+    // 预览模式：只更新高亮样式并滚动（不重新创建 DOM 元素）
+    updateCurrentSearchHighlight()
+    scrollToCurrentMatch()
+  }
+}
+
+// 监听搜索词变化
+watch(searchQuery, () => {
+  updateSearchMarkers()
+})
+
 function handleDrop(e: DragEvent) {
   if (!textarea.value) return
   e.preventDefault()
@@ -1260,6 +1565,11 @@ defineExpose({
   },
   jumpToLine,
   toggleMode,
+  openSearchBox,
+  closeSearchBox,
+  findNext,
+  findPrev,
+  getSearchBoxVisible: () => showSearchBox.value,
   syncFromTextarea: () => {
     if (!textarea.value) return
     content.value = textarea.value.value
@@ -1701,6 +2011,91 @@ defineExpose({
 .fade-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(-10px);
+}
+
+/* 内容搜索框 */
+.content-search-box {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.content-search-input {
+  width: 180px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.content-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.content-search-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: center;
+}
+
+.content-search-count.no-match {
+  color: #f44747;
+}
+
+.content-search-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.content-search-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.content-search-btn.close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* 搜索框动画 */
+.search-box-enter-active,
+.search-box-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.search-box-enter-from,
+.search-box-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+/* 预览模式搜索高亮 */
+.editor-overlay :deep(mark.search-highlight) {
+  background: rgba(255, 193, 7, 0.4);
+  border-radius: 2px;
+  padding: 1px 2px;
+}
+
+.editor-overlay :deep(mark.search-highlight.current) {
+  background: rgba(255, 193, 7, 0.8);
+  box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.6);
 }
 
 /* 图片预览模态框 */

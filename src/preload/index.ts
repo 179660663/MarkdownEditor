@@ -28,7 +28,8 @@ try {
     showItemInFolder: (basePath: string, relPath: string) => ipcRenderer.invoke('show-item-in-folder', basePath, relPath),
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) =>
       ipcRenderer.invoke('save-folders', folders),
-    loadFolders: () => ipcRenderer.invoke('load-folders')
+    loadFolders: () => ipcRenderer.invoke('load-folders'),
+    showSaveConfirmDialog: (fileName: string) => ipcRenderer.invoke('show-save-confirm-dialog', fileName)
   })
   console.log('[Preload] electronAPI exposed successfully')
 } catch (err) {

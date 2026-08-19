@@ -85,6 +85,16 @@ export const useEditorStore = defineStore('editor', () => {
     return documents.value.find((d) => d.id === id)
   }
 
+  function isDocumentDirty(id: string): boolean {
+    const tab = tabs.value.find((t) => t.id === id)
+    return tab?.isDirty ?? false
+  }
+
+  function getDirtyDocuments(): Doc[] {
+    const dirtyTabIds = tabs.value.filter((t) => t.isDirty).map((t) => t.id)
+    return documents.value.filter((d) => dirtyTabIds.includes(d.id))
+  }
+
   function updateDocument(id: string, content: string) {
     const doc = documents.value.find((d) => d.id === id)
     if (doc) {
@@ -486,8 +496,10 @@ export const useEditorStore = defineStore('editor', () => {
     currentFolder,
     folderTree,
     addDocument,
-    getDocument,
     getDocumentByPath,
+    getDocument,
+    isDocumentDirty,
+    getDirtyDocuments,
     updateDocument,
     deleteDocument,
     addTab,

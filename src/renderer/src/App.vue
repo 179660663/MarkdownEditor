@@ -563,15 +563,72 @@ function handleTabSwitch(id: string) {
   store.setActiveTab(id)
 }
 
-function handleTabClose(id: string) {
+async function handleTabClose(id: string) {
+  const doc = store.getDocument(id)
+  if (doc && store.isDocumentDirty(id)) {
+    const result = await window.electronAPI.showSaveConfirmDialog(doc.title)
+    if (result === 'cancel') {
+      return
+    }
+    if (result === 'save') {
+      // 切换到该标签页以便保存
+      store.setActiveTab(id)
+      await handleSave()
+      // 如果保存失败（比如用户取消了保存对话框），则不关闭标签页
+      if (store.isDocumentDirty(id)) {
+        return
+      }
+    }
+  }
   store.closeTab(id)
 }
 
-function handleCloseOtherTabs(id: string) {
+async function handleCloseOtherTabs(id: string) {
+  // 获取除当前标签外的其他未保存文档
+  const otherTabs = store.tabs.filter((t) => t.id !== id)
+  const dirtyDocs = otherTabs.filter((t) => t.isDirty).map((t) => ({
+    id: t.id,
+    title: t.title
+  }))
+
+  // 如果有未保存的文档，逐个确认
+  for (const dirtyDoc of dirtyDocs) {
+    const result = await window.electronAPI.showSaveConfirmDialog(dirtyDoc.title)
+    if (result === 'cancel') {
+      return
+    }
+    if (result === 'save') {
+      store.setActiveTab(dirtyDoc.id)
+      await handleSave()
+      if (store.isDocumentDirty(dirtyDoc.id)) {
+        return
+      }
+    }
+  }
   store.closeOtherTabs(id)
 }
 
-function handleCloseAllTabs() {
+async function handleCloseAllTabs() {
+  // 获取所有未保存的文档
+  const dirtyDocs = store.tabs.filter((t) => t.isDirty).map((t) => ({
+    id: t.id,
+    title: t.title
+  }))
+
+  // 如果有未保存的文档，逐个确认
+  for (const dirtyDoc of dirtyDocs) {
+    const result = await window.electronAPI.showSaveConfirmDialog(dirtyDoc.title)
+    if (result === 'cancel') {
+      return
+    }
+    if (result === 'save') {
+      store.setActiveTab(dirtyDoc.id)
+      await handleSave()
+      if (store.isDocumentDirty(dirtyDoc.id)) {
+        return
+      }
+    }
+  }
   store.closeAllTabs()
 }
 
@@ -662,8 +719,8 @@ function handleCollapseAll() {
   }
 }
 
-function handleCloseAllDocuments() {
-  store.closeAllTabs()
+async function handleCloseAllDocuments() {
+  await handleCloseAllTabs()
 }
 
 const folderContextMenu = reactive<{
@@ -709,7 +766,34 @@ function onContextMenuKeyDown(e: KeyboardEvent) {
 }
 
 // 全局文件菜单快捷键处理
-function handleGlobalKeyDown(e: KeyboardEvent) {
+async function handleGlobalKeyDown(e: KeyboardEvent) {
+  // Ctrl/Cmd + F: 打开搜索框（全局可用）
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault()
+    if (editorRef.value) {
+      editorRef.value.openSearchBox()
+    }
+    return
+  }
+
+  // 搜索框打开时的导航快捷键（全局可用）
+  if (editorRef.value?.getSearchBoxVisible?.()) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (e.shiftKey) {
+        editorRef.value.findPrev()
+      } else {
+        editorRef.value.findNext()
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      editorRef.value.closeSearchBox()
+      return
+    }
+  }
+
   const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
 
   // 以下快捷键在输入框中不处理
@@ -735,7 +819,7 @@ function handleGlobalKeyDown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
     e.preventDefault()
     if (store.activeTabId) {
-      store.closeTab(store.activeTabId)
+      await handleTabClose(store.activeTabId)
     }
     return
   }
@@ -805,6 +889,8 @@ onMounted(() => {
   document.addEventListener('keydown', onContextMenuKeyDown)
   // 添加全局文件菜单快捷键监听（不使用 capture，让编辑器内部优先处理）
   document.addEventListener('keydown', handleGlobalKeyDown)
+  // 将 store 暴露给 window，供主进程在关闭窗口时检查未保存文档
+  ;(window as any).__editorStore__ = store
 })
 
 onUnmounted(() => {

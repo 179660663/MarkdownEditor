@@ -14,6 +14,29 @@
       </div>
     </div>
 
+    <!-- 大纲搜索框 -->
+    <div class="outline-search">
+      <input
+        v-model="searchQuery"
+        type="text"
+        class="outline-search-input"
+        placeholder="搜索大纲..."
+        @keydown.enter.prevent="jumpToNextMatch"
+        @keydown.shift.enter.prevent="jumpToPrevMatch"
+      />
+      <button
+        v-if="searchQuery"
+        class="outline-search-clear"
+        title="清除搜索"
+        @click="clearSearch"
+      >
+        ✕
+      </button>
+      <span v-if="searchQuery && matchCount > 0" class="outline-search-count">
+        {{ currentMatchIndex + 1 }}/{{ matchCount }}
+      </span>
+    </div>
+
     <div class="outline-content">
       <div v-if="headings.length === 0" class="outline-empty">
         暂无标题
@@ -67,6 +90,8 @@ const emit = defineEmits<{
 const visible = ref(true)
 const collapsedIndices = ref<Set<number>>(new Set())
 const activeIndex = ref(-1)
+const searchQuery = ref('')
+const currentMatchIndex = ref(0)
 
 const md = new MarkdownIt()
 
@@ -99,7 +124,23 @@ const headings = computed<Heading[]>(() => {
   return result
 })
 
+// 过滤后的标题（支持搜索）
+const filteredHeadings = computed<Heading[]>(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) return headings.value
+
+  return headings.value.filter((heading) => heading.text.toLowerCase().includes(query))
+})
+
+// 匹配数量
+const matchCount = computed(() => filteredHeadings.value.length)
+
 const visibleHeadings = computed<Heading[]>(() => {
+  // 如果有搜索内容，显示所有匹配的标题（忽略折叠状态）
+  if (searchQuery.value.trim()) {
+    return filteredHeadings.value
+  }
+
   const result: Heading[] = []
   const headingsList = headings.value
   let skipUntilLevel = 0
@@ -173,6 +214,29 @@ function close() {
   emit('close')
 }
 
+function clearSearch() {
+  searchQuery.value = ''
+  currentMatchIndex.value = 0
+}
+
+function jumpToNextMatch() {
+  if (matchCount.value === 0) return
+  currentMatchIndex.value = (currentMatchIndex.value + 1) % matchCount.value
+  const heading = filteredHeadings.value[currentMatchIndex.value]
+  if (heading) {
+    jumpTo(heading)
+  }
+}
+
+function jumpToPrevMatch() {
+  if (matchCount.value === 0) return
+  currentMatchIndex.value = (currentMatchIndex.value - 1 + matchCount.value) % matchCount.value
+  const heading = filteredHeadings.value[currentMatchIndex.value]
+  if (heading) {
+    jumpTo(heading)
+  }
+}
+
 function setActiveByLine(line: number) {
   let closestIdx = -1
   for (let i = 0; i < headings.value.length; i++) {
@@ -191,6 +255,9 @@ watch(
   () => props.content,
   () => {
     activeIndex.value = -1
+    // 内容变化时重置搜索
+    searchQuery.value = ''
+    currentMatchIndex.value = 0
   }
 )
 
@@ -255,6 +322,61 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
+}
+
+/* 大纲搜索框样式 */
+.outline-search {
+  position: relative;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.outline-search-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 28px 5px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.outline-search-input:focus {
+  border-color: var(--accent);
+}
+
+.outline-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.outline-search-clear {
+  position: absolute;
+  right: 48px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.outline-search-clear:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.outline-search-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 30px;
+  text-align: right;
 }
 
 .outline-empty {
