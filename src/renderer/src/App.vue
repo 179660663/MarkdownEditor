@@ -130,7 +130,7 @@
               <div class="section-actions">
                 <button class="icon-action-btn" title="展开全部" @click="handleExpandAll">⊞</button>
                 <button class="icon-action-btn" title="折叠全部" @click="handleCollapseAll">⊟</button>
-                <button class="icon-action-btn" title="添加文件夹" @click="handleOpenFolder">📁</button>
+                <button class="icon-action-btn" title="打开文件夹" @click="handleOpenFolder">📁</button>
                 <button
                   v-if="store.folders.length > 0"
                   class="icon-action-btn"

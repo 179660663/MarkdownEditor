@@ -11,3 +11,4 @@ Thumbs.db
 *.tgz
 .cache
 release
+package-lock.json
