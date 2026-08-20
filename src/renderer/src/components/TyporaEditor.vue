@@ -19,13 +19,13 @@
 
     <!-- 源码编辑层（带格式化样式的 Markdown 文本） -->
     <div class="textarea-wrapper" v-show="mode === 'edit'">
-      <!-- 行号显示区 -->
-      <div class="line-numbers" ref="lineNumbers" @scroll="onLineNumbersScroll">
+      <!-- 行号显示区（overflow hidden，用户不可滚动，scrollTop 由 textarea 单向同步） -->
+      <div class="line-numbers" ref="lineNumbers">
         <div
           v-for="item in visibleLineNumbers"
           :key="item.lineNumber"
           class="line-number"
-          :class="{ active: item.isActive }"
+          :class="{ active: item.lineNumber === currentLineNumber }"
           :style="{ height: item.height + 'px', 'min-height': item.height + 'px' }"
         >
           {{ item.lineNumber }}
@@ -185,21 +185,18 @@ const syncOverlay = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const lineNumbers = ref<HTMLElement | null>(null)
 
-// 行号相关 - 使用 measureLineTopOffset 精确测量（与 positionCursorToLine 一致）
+// 行号相关 - 批量测量（一次镜像、一次 reflow），高度与 positionCursorToLine 逻辑一致
 interface LineNumberItem {
   lineNumber: number
   top: number
   height: number
-  isActive: boolean
 }
 
 const visibleLineNumbers = ref<LineNumberItem[]>([])
 const currentLineNumber = ref(1)
-let isScrollingFromTextarea = false
-let isScrollingFromLineNumbers = false
 let lineNumbersUpdateTimer: ReturnType<typeof setTimeout> | null = null
 
-// 计算行号 - 批量测量（一次镜像、一次 reflow），高度与 positionCursorToLine 逻辑一致
+// 计算行号
 function calculateLineNumbers(): LineNumberItem[] {
   if (!textarea.value) return []
 
@@ -215,8 +212,7 @@ function calculateLineNumbers(): LineNumberItem[] {
     result.push({
       lineNumber: i + 1,
       top: lineTops[i],
-      height: lineTops[i + 1] - lineTops[i],
-      isActive: (i + 1) === currentLineNumber.value
+      height: lineTops[i + 1] - lineTops[i]
     })
   }
 
@@ -247,24 +243,9 @@ function updateCurrentLine() {
   const textBeforeCursor = textarea.value.value.substring(0, cursorPos)
   const newLine = textBeforeCursor.split('\n').length
   if (newLine !== currentLineNumber.value) {
+    // 只更新行号数字，不重建行号数组（避免大数组 map 造成卡顿）
     currentLineNumber.value = newLine
-    // 只更新高亮状态，不重计算高度
-    visibleLineNumbers.value = visibleLineNumbers.value.map(item => ({
-      ...item,
-      isActive: item.lineNumber === newLine
-    }))
   }
-}
-
-function onLineNumbersScroll() {
-  if (isScrollingFromTextarea) return
-  if (!lineNumbers.value || !textarea.value) return
-
-  isScrollingFromLineNumbers = true
-  textarea.value.scrollTop = lineNumbers.value.scrollTop
-  setTimeout(() => {
-    isScrollingFromLineNumbers = false
-  }, 50)
 }
 
 const content = ref(props.modelValue)
@@ -466,23 +447,22 @@ function enterEditMode(silent = false) {
   if (mode.value === 'edit') return
 
   const savedLine = getCurrentSourceLine()
+  const contentSnapshot = content.value
 
   mode.value = 'edit'
   emit('mode-change', 'edit')
-  // textarea 从隐藏变为可见后，必须重新测量行号（隐藏时 clientWidth 为 0，测量无效）
   nextTick(() => {
+    // textarea 可见后重新测量行号（隐藏时 clientWidth 为 0，测量无效）
     updateLineNumbersImmediate()
-  })
-  if (!silent) {
-    setTimeout(() => {
+    // 用户已开始输入时不抢滚动和光标，避免打断编辑（测量可能阻塞，此回调会被推迟）
+    if (!silent && content.value === contentSnapshot) {
       scrollToSourceLine(savedLine)
       if (textarea.value) {
         setCursorToLine(savedLine)
-        textarea.value.focus()
       }
       checkScrollTop()
-    }, 50)
-  }
+    }
+  })
 }
 
 function enterPreviewMode() {
@@ -630,10 +610,10 @@ function onPreviewMouseClick(e: MouseEvent) {
 
 function setCursorToLine(lineNumber: number) {
   if (!textarea.value) return
-  
+
   const ta = textarea.value
   const lines = ta.value.split('\n')
-  
+
   let charOffset = 0
   let lineEndOffset = 0
   for (let i = 0; i < lineNumber && i < lines.length; i++) {
@@ -644,12 +624,12 @@ function setCursorToLine(lineNumber: number) {
   } else {
     lineEndOffset = charOffset
   }
-  
-  ta.focus()
-  requestAnimationFrame(() => {
-    ta.selectionStart = charOffset
-    ta.selectionEnd = lineEndOffset
-  })
+
+  // 先设置 selection 再 focus，preventScroll 防止浏览器自动滚动到光标位置
+  // （否则 focus 时 selection 还在默认的文档末尾，视图会跳到尾部）
+  ta.selectionStart = charOffset
+  ta.selectionEnd = lineEndOffset
+  ta.focus({ preventScroll: true })
 }
 
 // 创建与 textarea 排版一致的镜像 div
@@ -872,6 +852,7 @@ function handleInput() {
   emit('update:modelValue', content.value)
   mode.value = 'edit'
   emit('mode-change', 'edit')
+  updateCurrentLine()
   updateLineNumbersDebounced()
   scheduleRender()
 }
@@ -880,13 +861,9 @@ function handleTextareaScroll() {
   if (syncOverlay.value && textarea.value) {
     syncOverlay.value.scrollTop = textarea.value.scrollTop
   }
-  // 同步行号区域滚动
-  if (!isScrollingFromLineNumbers && lineNumbers.value && textarea.value) {
-    isScrollingFromTextarea = true
+  // 单向同步行号区域滚动（行号容器 overflow hidden 且无 scroll 监听，不会反向影响 textarea）
+  if (lineNumbers.value && textarea.value) {
     lineNumbers.value.scrollTop = textarea.value.scrollTop
-    setTimeout(() => {
-      isScrollingFromTextarea = false
-    }, 50)
   }
   checkScrollTop()
   // 用户手动滚动时才隐藏高亮；程序设置 scrollTop 触发的 scroll 事件不清除
