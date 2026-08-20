@@ -144,7 +144,9 @@
           <button class="image-preview-close" @click="closeImagePreview">×</button>
           <div class="image-preview-toolbar">
             <button class="image-preview-btn" @click.stop="openImageInFolder">
-              <span class="btn-icon">📂</span>
+              <el-icon class="context-menu-icon">
+                <FolderOpened />
+              </el-icon>
               <span class="btn-label">打开文件位置</span>
             </button>
           </div>
@@ -159,6 +161,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { renderMarkdown } from '../utils/markdown'
 import { useToolbar } from '../composables/useToolbar'
+import { FolderOpened } from '@element-plus/icons-vue'
 import mermaid from 'mermaid'
 
 const props = defineProps<{

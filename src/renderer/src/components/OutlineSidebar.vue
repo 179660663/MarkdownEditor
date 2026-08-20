@@ -10,7 +10,7 @@
         >
           {{ allCollapsed ? '⊞' : '⊟' }}
         </button>
-        <button class="outline-btn" title="隐藏侧边栏" @click="close">⟨</button>
+        <button class="outline-btn" title="隐藏大纲" @click="close">⟨</button>
       </div>
     </div>
 

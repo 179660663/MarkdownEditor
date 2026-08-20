@@ -22,7 +22,7 @@
       >×</button>
     </div>
 
-    <button class="tab-new" title="新建标签页" @click="$emit('new-tab')">+</button>
+    <button class="tab-new" title="新建文件" @click="$emit('new-tab')">+</button>
 
     <Teleport to="body">
       <div

@@ -60,7 +60,9 @@
         @click.stop
       >
         <div class="context-menu-item" @click="openFileLocation">
-          <span class="context-menu-icon">📂</span>
+          <el-icon class="context-menu-icon">
+            <FolderOpened />
+          </el-icon>
           <span>打开文件位置</span>
         </div>
       </div>

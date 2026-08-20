@@ -223,11 +223,11 @@
 
           <div class="doc-list">
             <div class="section-header">
-              <span>文件列表</span>
+              <span>已打开文件列表</span>
               <button
                 v-if="documents.length > 0"
                 class="icon-action-btn"
-                title="关闭全部文件"
+                title="关闭全部已打开文件"
                 @click="handleCloseAllDocuments"
               >
                 ✕
@@ -331,7 +331,9 @@
         @click.stop
       >
         <div class="context-menu-item" @click="openFolderLocation">
-          <span class="context-menu-icon">📂</span>
+          <el-icon class="context-menu-icon">
+            <FolderOpened />
+          </el-icon>
           <span>打开文件位置</span>
         </div>
       </div>
@@ -1381,7 +1383,7 @@ onUnmounted(() => {
 }
 
 .folder-item-close:hover {
-  background: #e81123;
+  background: #f0d2d5;
   color: #fff;
 }
 
