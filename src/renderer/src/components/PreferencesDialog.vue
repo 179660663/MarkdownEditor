@@ -30,15 +30,14 @@
                   v-model="imageSavePath"
                   type="text"
                   class="pref-input"
-                  placeholder="选择图片保存文件夹..."
+                  placeholder="绝对路径、相对路径或带占位符的路径（如 ./images、./${filename}/assets、./${date}）"
                   @change="saveConfig"
                 />
                 <button class="pref-browse-btn" @click="browseFolder">浏览...</button>
               </div>
             </div>
 
-            <p class="pref-hint">
-              {{ hintText }}
+            <p class="pref-hint" v-html="hintText">
             </p>
           </section>
         </div>
@@ -64,7 +63,7 @@ const hintText = computed(() => {
     case 'filename-assets':
       return '粘贴的图片将保存到文档所在目录下的「文档名.assets」文件夹，并以相对路径插入。'
     case 'custom':
-      return '粘贴的图片将保存到上方指定的文件夹。与文档同一磁盘时以相对路径插入，否则使用绝对路径。'
+      return '粘贴的图片将保存到上方指定的文件夹。可点击「浏览」选择文件夹，也可手动输入路径。<br/>支持占位符：<br/>&emsp;&emsp;${filename}（文档名）<br/>&emsp;&emsp;${date}（YYYY-MM-DD）<br/>&emsp;&emsp;${datetime}（YYYY-MM-DD HH-mm-ss）<br/>&emsp;&emsp;${YYYY}/${MM}/${DD}（年/月/日）<br/>示例：<br/>&emsp;&emsp;./${filename}/assets<br/>&emsp;&emsp;./images/${date}<br/>&emsp;&emsp;D:\\Images\\${YYYY}\\${MM}'
     case 'base64':
       return '粘贴的图片将以 Base64 形式直接嵌入文档，不会生成图片文件。'
     default:
@@ -134,9 +133,9 @@ onUnmounted(() => {
 }
 
 .pref-dialog {
-  width: 640px;
+  width: 700px;
   max-width: 90vw;
-  height: 420px;
+  height: 520px;
   max-height: 85vh;
   background: var(--bg-primary);
   border: 1px solid var(--border);

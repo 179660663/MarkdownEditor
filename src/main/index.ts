@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
-import { join, relative, basename, extname, resolve, dirname, normalize } from 'node:path'
+import { join, relative, basename, extname, resolve, dirname, normalize, isAbsolute } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import Store from 'electron-store'
@@ -788,6 +788,35 @@ interface SaveImageArgs {
   customPath?: string
 }
 
+// 解析路径中的占位符：${filename}、${date}、${datetime}、${YYYY}、${MM}、${DD}
+function resolvePathPlaceholders(inputPath: string, docPath?: string): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+  const datetimeStr = `${dateStr} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`
+
+  let result = inputPath
+
+  // ${filename} - 当前文档文件名（不含扩展名）
+  if (result.includes('${filename}')) {
+    let filename = 'untitled'
+    if (docPath) {
+      filename = basename(docPath, extname(docPath))
+    }
+    result = result.replace(/\$\{filename\}/g, filename)
+  }
+
+  // 日期占位符
+  result = result
+    .replace(/\$\{YYYY\}/g, String(now.getFullYear()))
+    .replace(/\$\{MM\}/g, pad(now.getMonth() + 1))
+    .replace(/\$\{DD\}/g, pad(now.getDate()))
+    .replace(/\$\{date\}/g, dateStr)
+    .replace(/\$\{datetime\}/g, datetimeStr)
+
+  return result
+}
+
 ipcMain.handle('save-image', async (_event, args: SaveImageArgs) => {
   try {
     const { docPath, fileName, data, mode, customPath } = args
@@ -796,7 +825,18 @@ ipcMain.handle('save-image', async (_event, args: SaveImageArgs) => {
     let targetDir: string
     if (mode === 'custom') {
       if (!customPath) return null
-      targetDir = customPath
+      // 解析占位符
+      const resolvedCustomPath = resolvePathPlaceholders(customPath, docPath)
+      console.log('[Image] Custom path:', customPath)
+      console.log('[Image] Resolved path:', resolvedCustomPath)
+      if (isAbsolute(resolvedCustomPath)) {
+        targetDir = resolvedCustomPath
+      } else {
+        // 相对路径（如 ./images、../assets）以当前文档目录为起点解析
+        if (!docPath) return null
+        targetDir = resolve(dirname(docPath), resolvedCustomPath)
+      }
+      console.log('[Image] Target dir:', targetDir)
     } else {
       // 相对目录模式必须依赖已保存的文档路径
       if (!docPath) return null

@@ -52,7 +52,7 @@
           <div class="dropdown-divider"></div>
           <div class="dropdown-item" @click="showPreferences = true; closeMenu()">
             <span class="dropdown-icon">⚙️</span> 偏好设置
-            <span class="shortcut">Ctrl+,</span>
+            <span class="shortcut">Ctrl+'</span>
           </div>
         </div>
       </div>
@@ -776,6 +776,11 @@ function onContextMenuKeyDown(e: KeyboardEvent) {
 
 // 全局文件菜单快捷键处理
 async function handleGlobalKeyDown(e: KeyboardEvent) {
+  // 调试日志：检测快捷键
+  if (e.ctrlKey || e.metaKey) {
+    console.log('[Shortcut] Key pressed:', e.key, 'Ctrl:', e.ctrlKey, 'Meta:', e.metaKey)
+  }
+
   // Ctrl/Cmd + F: 打开搜索框（全局可用）
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
     e.preventDefault()
@@ -785,14 +790,14 @@ async function handleGlobalKeyDown(e: KeyboardEvent) {
     return
   }
 
-  const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
-
-  // Ctrl/Cmd + ,: 打开偏好设置（全局可用）
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === ',') {
+  // Ctrl/Cmd + ': 打开偏好设置（全局可用，即使在输入框中）
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "'") {
     e.preventDefault()
     showPreferences.value = true
     return
   }
+
+  const isTextInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
 
   // 搜索框打开时的导航快捷键（全局处理）
   if (editorRef.value?.getSearchBoxVisible?.()) {
