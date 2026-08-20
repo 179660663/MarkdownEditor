@@ -1834,7 +1834,7 @@ defineExpose({
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 24px;
+  padding: 24px 150px 24px 24px;
   overflow-y: auto;
   pointer-events: auto;
   font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -2083,7 +2083,7 @@ defineExpose({
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 24px;
+  padding: 24px 150px 24px 24px;
   background: transparent;
   color: var(--editor-text);
   caret-color: var(--caret);
