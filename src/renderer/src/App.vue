@@ -297,7 +297,7 @@
           @close="showOutline = false"
         />
         <button
-          v-if="!showOutline && store.activeTabId"
+          v-if="!showOutline"
           class="outline-toggle"
           :class="{ 'outline-toggle-left': outlinePosition === 'left' }"
           title="显示大纲"
@@ -306,7 +306,6 @@
           大纲
         </button>
         <button
-          v-if="store.activeTabId"
           class="outline-position-toggle"
           :title="outlinePosition === 'left' ? '切换大纲到右侧' : '切换大纲到左侧'"
           @click="toggleOutlinePosition"
