@@ -182,7 +182,8 @@ async function createWindow() {
     win.loadURL(url).catch((err) => {
       console.error('[Main] Failed to load dev URL:', err)
     })
-    win.webContents.openDevTools()
+    // 打开DevTools调试工具
+    // win.webContents.openDevTools()
   } else {
     console.log('[Main] Loading local file:', indexHtml)
     win.loadFile(indexHtml)

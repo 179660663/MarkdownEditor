@@ -125,14 +125,18 @@
         <div v-if="!showSidebar" class="sidebar-toggle" @click="showSidebar = true" title="展开侧边栏">
           ⟩
         </div>
-        <div v-else class="sidebar-content">
-          <div class="sidebar-header">
+        <div v-else class="sidebar-inner">
+          <div class="sidebar-main-header">
+            <span class="sidebar-title">文件浏览</span>
             <button class="icon-btn" title="收起侧边栏" @click="showSidebar = false">⟨</button>
           </div>
-          <button class="new-btn" @click="handleNew">新建文件</button>
-          <button class="new-btn" @click="handleOpen">打开文件</button>
-          <button class="new-btn" @click="handleOpenFolder">打开文件夹</button>
-          <div class="folder-section">
+          <div class="sidebar-content">
+            <div class="sidebar-actions">
+              <button class="new-btn" @click="handleNew">新建文件</button>
+              <button class="new-btn" @click="handleOpen">打开文件</button>
+              <button class="new-btn" @click="handleOpenFolder">打开文件夹</button>
+            </div>
+            <div class="folder-section">
             <div class="section-header">
               <span>文件夹浏览</span>
               <div class="section-actions">
@@ -244,6 +248,7 @@
             </div>
           </div>
         </div>
+      </div>
       </aside>
 
       <div
@@ -1203,13 +1208,20 @@ onUnmounted(() => {
   margin-right: -1px;
 }
 
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
 .sidebar-content {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   padding: 12px;
   overflow-y: auto;
   flex: 1;
+  gap: 12px;
 }
 
 .sidebar-toggle {
@@ -1234,6 +1246,34 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
   padding: 4px 8px;
+}
+
+.sidebar-main-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  height: 38px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
 }
 
 .icon-btn {
@@ -1269,8 +1309,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
 }
 
 .folder-open-btn {
@@ -1434,8 +1472,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
 }
 
 .section-header {
@@ -1485,8 +1521,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
 }
 
 .doc-item {
