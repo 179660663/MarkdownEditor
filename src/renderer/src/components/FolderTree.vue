@@ -16,7 +16,10 @@
             {{ isExpanded(node.path) ? '▾' : '▸' }}
           </button>
           <span v-else class="tree-chevron-placeholder"></span>
-          <span class="tree-icon">{{ isExpanded(node.path) ? '📂' : '📁' }}</span>
+          <span class="tree-icon">
+            <el-icon v-if="isExpanded(node.path)" class="dropdown-icon"><FolderOpened /></el-icon>
+            <el-icon v-else class="dropdown-icon"><Folder /></el-icon>
+          </span> 
           <span class="tree-label" :title="node.name">{{ node.name }}</span>
           <span v-if="hasChildren(node)" class="tree-count">{{ countFiles(node) }}</span>
         </div>
@@ -67,6 +70,7 @@
 
 <script setup lang="ts">
 import { reactive, onMounted, onBeforeUnmount } from 'vue'
+import { Folder, FolderOpened } from '@element-plus/icons-vue'
 
 defineOptions({ name: 'FolderTree' })
 

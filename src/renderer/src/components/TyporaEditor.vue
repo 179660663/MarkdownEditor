@@ -848,6 +848,7 @@ function jumpToLine(lineNumber: number, headingIndex?: number) {
 
 function handleInput() {
   if (!textarea.value) return
+  console.log('[handleInput] textarea value length:', textarea.value.value.length, 'content length:', content.value.length)
   content.value = textarea.value.value
   emit('update:modelValue', content.value)
   mode.value = 'edit'
@@ -1647,7 +1648,8 @@ function focusTextarea() {
 
 watch(
   () => props.modelValue,
-  (val) => {
+  (val, oldVal) => {
+    console.log('[TyporaEditor watch] modelValue changed:', val !== oldVal, 'length:', val?.length, 'oldLength:', oldVal?.length)
     if (val !== content.value) {
       content.value = val
       updateLineNumbersDebounced()

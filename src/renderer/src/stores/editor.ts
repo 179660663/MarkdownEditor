@@ -8,6 +8,7 @@ interface Doc {
   updatedAt: number
   filePath?: string
   mode: 'edit' | 'preview'
+  originalContent?: string // 保存时的原始内容，用于判断是否真的修改了
 }
 
 interface RecentFile {
@@ -66,13 +67,15 @@ export const useEditorStore = defineStore('editor', () => {
 
   function addDocument(title: string, content: string, filePath?: string, mode: 'edit' | 'preview' = 'edit'): string {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const contentCopy = String(content)
     documents.value.push({
       id,
       title,
-      content,
+      content: contentCopy,
       updatedAt: Date.now(),
       filePath,
-      mode
+      mode,
+      originalContent: filePath ? contentCopy.slice() : undefined // 有文件路径的文档，记录原始内容副本
     })
     return id
   }
@@ -104,17 +107,25 @@ export const useEditorStore = defineStore('editor', () => {
   function updateDocument(id: string, content: string) {
     const doc = documents.value.find((d) => d.id === id)
     if (doc) {
-      doc.content = content
-      doc.updatedAt = Date.now()
-      if (!doc.filePath && content.trim()) {
-        doc.title = content.split('\n')[0].replace(/^#+\s*/, '').slice(0, 50) || '无标题文档'
+      const contentStr = String(content)
+      // 检查内容是否真的变化了
+      const hasChanged = doc.content !== contentStr
+      if (!hasChanged) {
+        return
       }
-      if (!isLoading.value) {
-        if (doc.filePath) {
-          isDirty.value = true
-          updateTabDirty(id, true)
-          updateTabTitle(id, doc.title)
-        }
+      doc.content = contentStr
+      doc.updatedAt = Date.now()
+      if (!doc.filePath && contentStr.trim()) {
+        doc.title = contentStr.split('\n')[0].replace(/^#+\s*/, '').slice(0, 50) || '无标题文档'
+      }
+      // 使用 originalContent 判断是否真的修改了（与保存时的内容比较）
+      if (doc.filePath) {
+        const isActuallyDirty = doc.originalContent !== undefined && doc.originalContent !== contentStr
+        const shouldBeDirty = doc.originalContent === undefined || isActuallyDirty
+        console.log('[updateDocument] Doc:', doc.title, 'dirty:', shouldBeDirty, 'originalLen:', doc.originalContent?.length, 'currentLen:', contentStr.length)
+        isDirty.value = shouldBeDirty
+        updateTabDirty(id, shouldBeDirty)
+        updateTabTitle(id, doc.title)
       }
     }
   }
@@ -140,6 +151,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function closeTab(id: string) {
     const index = tabs.value.findIndex((t) => t.id === id)
+    console.log('[closeTab] Closing tab:', id, 'index:', index, 'activeTab:', activeTabId.value)
     if (index === -1) return
 
     tabs.value.splice(index, 1)
@@ -148,9 +160,14 @@ export const useEditorStore = defineStore('editor', () => {
     if (activeTabId.value === id) {
       if (tabs.value.length > 0) {
         const nextIndex = Math.min(index, tabs.value.length - 1)
-        activeTabId.value = tabs.value[nextIndex].id
+        const nextId = tabs.value[nextIndex].id
+        console.log('[closeTab] Auto-switching to tab:', nextId)
+        // 使用 setActiveTab 来正确设置状态（包括 isLoading）
+        setActiveTab(nextId)
       } else {
         activeTabId.value = null
+        currentFilePath.value = null
+        isDirty.value = false
       }
     }
   }
@@ -171,22 +188,20 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function setActiveTab(id: string) {
-    isLoading.value = true
     activeTabId.value = id
     const doc = getDocument(id)
     if (doc) {
       currentFilePath.value = doc.filePath || null
+      // 根据 originalContent 判断 dirty 状态
       if (!doc.filePath) {
         isDirty.value = true
         updateTabDirty(id, true)
       } else {
-        isDirty.value = false
-        updateTabDirty(id, false)
+        const isActuallyDirty = doc.originalContent !== undefined && doc.originalContent !== doc.content
+        isDirty.value = isActuallyDirty
+        updateTabDirty(id, isActuallyDirty)
       }
     }
-    setTimeout(() => {
-      isLoading.value = false
-    }, 300)
   }
 
   function moveTab(fromIndex: number, toIndex: number) {
@@ -261,10 +276,11 @@ export const useEditorStore = defineStore('editor', () => {
       if (ok) {
         isDirty.value = false
         if (activeTabId.value) {
-          // 更新文档的文件路径
+          // 更新文档的文件路径和原始内容
           const doc = documents.value.find((d) => d.id === activeTabId.value)
           if (doc) {
             doc.filePath = currentFilePath.value
+            doc.originalContent = String(content) // 保存后更新原始内容副本
           }
           markTabClean(activeTabId.value)
         }
@@ -280,10 +296,11 @@ export const useEditorStore = defineStore('editor', () => {
       currentFilePath.value = path
       isDirty.value = false
       if (activeTabId.value) {
-        // 更新文档的文件路径
+        // 更新文档的文件路径和原始内容
         const doc = documents.value.find((d) => d.id === activeTabId.value)
         if (doc) {
           doc.filePath = path
+          doc.originalContent = String(content) // 保存后更新原始内容副本
         }
         markTabClean(activeTabId.value)
       }

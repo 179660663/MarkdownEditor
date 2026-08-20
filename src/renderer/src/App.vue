@@ -163,11 +163,11 @@
                   >
                     {{ folder.collapsed ? '▸' : '▾' }}
                   </button>
+                  <el-icon class="dropdown-icon"><Folder /></el-icon>
                   <span
                     class="folder-item-name"
                     :title="folder.path"
-                  >
-                    📁 {{ folder.name }}
+                  > {{ folder.name }}
                   </span>
                   <span class="folder-item-path" :title="folder.path">{{ folder.path }}</span>
                   <button
@@ -260,9 +260,10 @@
           <TyporaEditor
             v-if="store.activeTabId"
             ref="editorRef"
-            v-model="currentDoc.content"
+            :model-value="currentDoc.content"
             :editor-mode="currentTabMode"
             :file-path="currentDocFilePath"
+            @update:model-value="handleContentUpdate"
             @save-requested="handleSave"
             @save-as-requested="handleSaveAs"
             @mode-change="handleModeChange"
@@ -350,7 +351,7 @@ import TabBar from './components/TabBar.vue'
 import OutlineSidebar from './components/OutlineSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FolderTree from './components/FolderTree.vue'
-import { Document, FolderOpened, Download, CopyDocument, Setting, DocumentAdd } from '@element-plus/icons-vue'
+import { Document, Folder, FolderOpened, Download, CopyDocument, Setting, DocumentAdd } from '@element-plus/icons-vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 
 interface FileNode {
@@ -477,14 +478,12 @@ const statusFileName = computed(() => {
   return currentDoc.value.title || '无标题文档'
 })
 
-watch(
-  () => currentDoc.value.content,
-  (val) => {
-    if (store.activeTabId) {
-      store.updateDocument(store.activeTabId, val)
-    }
+function handleContentUpdate(newContent: string) {
+  console.log('[handleContentUpdate] new content length:', newContent?.length)
+  if (store.activeTabId) {
+    store.updateDocument(store.activeTabId, newContent)
   }
-)
+}
 
 function removeInitialLoading() {
   const el = document.getElementById('initial-loading')
