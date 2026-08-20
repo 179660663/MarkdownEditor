@@ -529,10 +529,16 @@ ipcMain.handle('get-recent-files', () => {
   return store.get('recentFiles', [])
 })
 
+function normalizePath(filePath: string): string {
+  // 统一路径格式：转换为小写（Windows）并使用正斜杠
+  return filePath.toLowerCase().replace(/\\/g, '/')
+}
+
 ipcMain.handle('add-to-recent-files', (_event, path: string, title: string) => {
   if (!store) return false
   const recentFiles = store.get('recentFiles', []) as RecentFile[]
-  const filtered = recentFiles.filter((f) => f.path !== path)
+  const normalizedTarget = normalizePath(path)
+  const filtered = recentFiles.filter((f) => normalizePath(f.path) !== normalizedTarget)
   filtered.unshift({ path, title })
   store.set('recentFiles', filtered.slice(0, 10))
   return true

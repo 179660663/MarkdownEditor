@@ -77,8 +77,14 @@ export const useEditorStore = defineStore('editor', () => {
     return id
   }
 
+  function normalizePath(filePath: string): string {
+    // 统一路径格式：转换为小写（Windows）并使用正斜杠
+    return filePath.toLowerCase().replace(/\\/g, '/')
+  }
+
   function getDocumentByPath(filePath: string): Doc | undefined {
-    return documents.value.find((d) => d.filePath === filePath)
+    const normalizedTarget = normalizePath(filePath)
+    return documents.value.find((d) => d.filePath && normalizePath(d.filePath) === normalizedTarget)
   }
 
   function getDocument(id: string): Doc | undefined {

@@ -30,28 +30,35 @@
           @mouseleave="closeMenu"
         >
           <div class="dropdown-item" @click="handleNew(); closeMenu()">
-            <span class="dropdown-icon">📄</span> 新建文件
+            <el-icon class="dropdown-icon"><Document /></el-icon>
+            <span>新建文件</span>
             <span class="shortcut">Ctrl+N</span>
           </div>
           <div class="dropdown-item" @click="handleOpen(); closeMenu()">
-            <span class="dropdown-icon">📃</span> 打开文件
+            <el-icon class="dropdown-icon"><DocumentAdd /></el-icon>
+            <span>打开文件</span>
             <span class="shortcut">Ctrl+O</span>
           </div>
           <div class="dropdown-item" @click="handleOpenFolder(); closeMenu()">
-            <span class="dropdown-icon">📁</span> 打开文件夹
+            <el-icon class="dropdown-icon"><FolderOpened /></el-icon>
+            <span>打开文件夹</span>
+            <span class="shortcut">Ctrl+Shift+O</span>
           </div>
           <div class="dropdown-divider"></div>
           <div class="dropdown-item" @click="handleSave(); closeMenu()">
-            <span class="dropdown-icon">💾</span> 保存
+            <el-icon class="dropdown-icon"><Download /></el-icon>
+            <span>保存</span>
             <span class="shortcut">Ctrl+S</span>
           </div>
           <div class="dropdown-item" @click="handleSaveAs(); closeMenu()">
-            <span class="dropdown-icon">📋</span> 另存为
+            <el-icon class="dropdown-icon"><CopyDocument /></el-icon>
+            <span>另存为</span>
             <span class="shortcut">Ctrl+Shift+S</span>
           </div>
           <div class="dropdown-divider"></div>
           <div class="dropdown-item" @click="showPreferences = true; closeMenu()">
-            <span class="dropdown-icon">⚙️</span> 偏好设置
+            <el-icon class="dropdown-icon"><Setting /></el-icon>
+            <span>偏好设置</span>
             <span class="shortcut">Ctrl+'</span>
           </div>
         </div>
@@ -123,14 +130,15 @@
             <button class="icon-btn" title="收起侧边栏" @click="showSidebar = false">⟨</button>
           </div>
           <button class="new-btn" @click="handleNew">新建文件</button>
-
+          <button class="new-btn" @click="handleOpen">打开文件</button>
+          <button class="new-btn" @click="handleOpenFolder">打开文件夹</button>
           <div class="folder-section">
             <div class="section-header">
-              <span>文件浏览</span>
+              <span>文件夹浏览</span>
               <div class="section-actions">
                 <button class="icon-action-btn" title="展开全部" @click="handleExpandAll">⊞</button>
                 <button class="icon-action-btn" title="折叠全部" @click="handleCollapseAll">⊟</button>
-                <button class="icon-action-btn" title="打开文件夹" @click="handleOpenFolder">📁</button>
+                <button class="icon-action-btn" title="打开文件夹" @click="handleOpenFolder"><el-icon class="dropdown-icon"><FolderOpened /></el-icon></button>
                 <button
                   v-if="store.folders.length > 0"
                   class="icon-action-btn"
@@ -141,10 +149,7 @@
                 </button>
               </div>
             </div>
-            <div v-if="store.folders.length === 0" class="empty-hint">
-              <button class="folder-open-btn" @click="handleOpenFolder">📁 打开文件夹</button>
-            </div>
-            <div v-else class="folder-list">
+            <div class="folder-list">
               <div
                 v-for="folder in store.folders"
                 :key="folder.id"
@@ -192,11 +197,11 @@
 
           <div class="recent-section">
             <div class="section-header">
-              <span>最近文件</span>
+              <span>最近打开文件</span>
               <button
                 v-if="store.recentFiles.length > 0"
                 class="icon-action-btn"
-                title="清空最近文件"
+                title="清空最近打开文件"
                 @click="store.clearRecentFilesAction()"
               >
                 🗑
@@ -218,11 +223,11 @@
 
           <div class="doc-list">
             <div class="section-header">
-              <span>文档列表</span>
+              <span>文件列表</span>
               <button
                 v-if="documents.length > 0"
                 class="icon-action-btn"
-                title="关闭全部文档"
+                title="关闭全部文件"
                 @click="handleCloseAllDocuments"
               >
                 ✕
@@ -345,6 +350,7 @@ import TabBar from './components/TabBar.vue'
 import OutlineSidebar from './components/OutlineSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FolderTree from './components/FolderTree.vue'
+import { Document, FolderOpened, Download, CopyDocument, Setting, DocumentAdd } from '@element-plus/icons-vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 
 interface FileNode {
@@ -833,6 +839,13 @@ async function handleGlobalKeyDown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
     e.preventDefault()
     handleOpen()
+    return
+  }
+
+  // Ctrl/Cmd + Shift + O: 打开文件夹
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
+    e.preventDefault()
+    handleOpenFolder()
     return
   }
 
