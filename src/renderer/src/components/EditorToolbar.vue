@@ -78,27 +78,6 @@
       <div class="toolbar-group">
         <button
           class="tb-btn"
-          title="专注模式"
-          :class="{ active: themeStore.focusMode }"
-          @click="themeStore.toggleFocusMode()"
-        >
-          <span class="tb-icon">🎯</span>
-        </button>
-        <button
-          class="tb-btn"
-          title="打字机模式"
-          :class="{ active: themeStore.typewriterMode }"
-          @click="themeStore.toggleTypewriterMode()"
-        >
-          <span class="tb-icon">⌨️</span>
-        </button>
-      </div>
-
-      <div class="toolbar-divider"></div>
-
-      <div class="toolbar-group">
-        <button
-          class="tb-btn"
           title="切换编辑/预览模式 (Ctrl+Shift+E)"
           @click="toggleEditMode"
         >
@@ -167,7 +146,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useThemeStore } from '../stores/theme'
 import { useEditorStore } from '../stores/editor'
 import { exportToHtml, exportToPdf } from '../utils/exporter'
 
@@ -175,7 +153,6 @@ const props = defineProps<{
   editorRef: any
 }>()
 
-const themeStore = useThemeStore()
 const store = useEditorStore()
 
 const visible = ref(false)

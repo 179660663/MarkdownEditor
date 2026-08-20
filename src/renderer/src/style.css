@@ -138,19 +138,6 @@ body,
   background: var(--selection);
 }
 
-body.focus-mode .editor-overlay > *:not(.active-paragraph) {
-  opacity: 0.3;
-  transition: opacity 0.3s ease;
-}
-
-body.focus-mode .editor-overlay > .active-paragraph {
-  opacity: 1;
-}
-
-body.typewriter-mode .editor-container {
-  padding-top: 30vh;
-}
-
 .hljs {
   background: transparent !important;
 }

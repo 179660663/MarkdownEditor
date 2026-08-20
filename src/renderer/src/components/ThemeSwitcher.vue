@@ -21,17 +21,7 @@
         <span class="option-label">{{ theme.label }}</span>
         <span v-if="theme.value === currentTheme" class="option-check">✓</span>
       </div>
-      <div class="theme-divider"></div>
-      <div class="theme-mode" :class="{ active: store.focusMode }" @click="store.toggleFocusMode()">
-        <span class="option-icon">🎯</span>
-        <span class="option-label">专注模式</span>
-        <span v-if="store.focusMode" class="option-check">✓</span>
-      </div>
-      <div class="theme-mode" :class="{ active: store.typewriterMode }" @click="store.toggleTypewriterMode()">
-        <span class="option-icon">⌨️</span>
-        <span class="option-label">打字机模式</span>
-        <span v-if="store.typewriterMode" class="option-check">✓</span>
-      </div>
+
     </div>
   </div>
 </template>
@@ -146,13 +136,11 @@ onBeforeUnmount(() => {
   transition: background 0.15s;
 }
 
-.theme-option:hover,
-.theme-mode:hover {
+.theme-option:hover {
   background: var(--bg-tertiary);
 }
 
-.theme-option.active,
-.theme-mode.active {
+.theme-option.active {
   background: var(--bg-tertiary);
   color: var(--accent);
 }
