@@ -7,4 +7,6 @@ if not exist "%ELECTRON_BUILDER_CACHE%" mkdir "%ELECTRON_BUILDER_CACHE%"
 REM Use Chinese mirrors for faster downloads
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
-npm run make:win
+REM First compile the latest source code, then package
+call npm run build
+call npm run make:win
