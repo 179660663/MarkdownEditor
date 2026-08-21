@@ -461,7 +461,7 @@ const appError = ref<string | null>(null)
 const outlinePosition = ref<'left' | 'right'>('right')
 const showPreferences = ref(false)
 
-const sidebarWidth = ref(240)
+const sidebarWidth = ref(280)
 const outlineWidth = ref(220)
 
 type DragTarget = 'sidebar' | 'outline' | null
@@ -1890,6 +1890,20 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  gap: 6px;
+}
+
+.section-header > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
 }
 
