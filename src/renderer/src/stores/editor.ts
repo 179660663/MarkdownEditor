@@ -400,6 +400,16 @@ export const useEditorStore = defineStore('editor', () => {
     folders.value.splice(idx, 1, updated)
   }
 
+  function expandFolderNode(folderId: string, path: string) {
+    const idx = folders.value.findIndex((f) => f.id === folderId)
+    if (idx === -1) return
+    const folder = folders.value[idx]
+    const newSet = new Set(folder.expanded)
+    newSet.add(path)
+    const updated: FolderEntry = { ...folder, expanded: newSet }
+    folders.value.splice(idx, 1, updated)
+  }
+
   function collectAllDirPaths(nodes: FileNode[]): string[] {
     const paths: string[] = []
     for (const node of nodes) {
@@ -498,6 +508,63 @@ export const useEditorStore = defineStore('editor', () => {
     })
   }
 
+  // 防止文件夹树刷新乱序覆盖（快速来回切换时，旧请求结果可能晚于新请求返回）
+  const reloadSeq = new Map<string, number>()
+
+  async function reloadFolderTree(folderId: string) {
+    const folder = folders.value.find((f) => f.id === folderId)
+    if (!folder) return
+    const seq = (reloadSeq.get(folderId) || 0) + 1
+    reloadSeq.set(folderId, seq)
+    try {
+      const tree = await window.electronAPI.listFolder(folder.path)
+      // 如果已有更新的刷新请求，则丢弃本次过期结果
+      if (reloadSeq.get(folderId) !== seq) return
+      const idx = folders.value.findIndex((f) => f.id === folderId)
+      if (idx !== -1) {
+        const current = folders.value[idx]
+        // 保留仍然存在的目录的展开状态
+        const allDirPaths = collectAllDirPaths(tree)
+        const preservedExpanded = new Set([...current.expanded].filter((p) => allDirPaths.includes(p)))
+        const updated: FolderEntry = { ...current, tree, expanded: preservedExpanded }
+        folders.value.splice(idx, 1, updated)
+      }
+    } catch (err) {
+      console.error('[Store] Failed to reload folder tree:', folderId, err)
+    }
+  }
+
+  // 文件或文件夹重命名后，同步更新已打开文档中的路径和标题
+  function updateDocPathsAfterRename(oldPath: string, newPath: string) {
+    const oldNorm = normalizePath(oldPath)
+    const oldPrefix = oldNorm.endsWith('/') ? oldNorm : oldNorm + '/'
+    const newBase = newPath.replace(/[\\/]+$/, '')
+
+    for (const doc of documents.value) {
+      if (!doc.filePath) continue
+      const p = normalizePath(doc.filePath)
+      if (p === oldNorm) {
+        doc.filePath = newPath
+        const newName = getFileName(newPath)
+        if (newName !== doc.title) {
+          doc.title = newName
+          updateTabTitle(doc.id, newName)
+        }
+      } else if (p.startsWith(oldPrefix)) {
+        doc.filePath = newBase + doc.filePath.slice(oldPath.length)
+      }
+    }
+
+    if (currentFilePath.value) {
+      const p = normalizePath(currentFilePath.value)
+      if (p === oldNorm) {
+        currentFilePath.value = newPath
+      } else if (p.startsWith(oldPrefix)) {
+        currentFilePath.value = newBase + currentFilePath.value.slice(oldPath.length)
+      }
+    }
+  }
+
   function getFullPath(relPath: string, folderId?: string): string {
     const fid = folderId || activeFolderId.value
     const folder = folders.value.find((f) => f.id === fid)
@@ -548,6 +615,7 @@ export const useEditorStore = defineStore('editor', () => {
     setActiveFolder,
     removeFolder,
     toggleFolderNode,
+    expandFolderNode,
     expandAllFolderNodes,
     collapseAllFolderNodes,
     getFolderExpanded,
@@ -557,6 +625,8 @@ export const useEditorStore = defineStore('editor', () => {
     clearAllFolders,
     restoreFolders,
     setFolderCollapsed,
+    reloadFolderTree,
+    updateDocPathsAfterRename,
     getFullPath
   }
 })

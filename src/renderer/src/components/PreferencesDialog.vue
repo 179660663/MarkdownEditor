@@ -10,6 +10,22 @@
           <aside class="pref-sidebar">
             <div
               class="pref-nav-item"
+              :class="{ active: activeNav === 'general' }"
+              @click="activeNav = 'general'"
+            >
+              <Setting class="nav-icon" />
+              常规
+            </div>
+            <div
+              class="pref-nav-item"
+              :class="{ active: activeNav === 'shortcuts' }"
+              @click="activeNav = 'shortcuts'"
+            >
+              <Key class="nav-icon" />
+              快捷键
+            </div>
+            <div
+              class="pref-nav-item"
               :class="{ active: activeNav === 'image' }"
               @click="activeNav = 'image'"
             >
@@ -26,7 +42,32 @@
             </div>
           </aside>
           <section class="pref-content">
-            <template v-if="activeNav === 'image'">
+            <template v-if="activeNav === 'general'">
+              <h3 class="pref-section-title">常规</h3>
+
+              <div class="pref-field">
+                <label class="pref-label">文件浏览</label>
+                <div class="about-row">
+                  <span class="about-hint">显示隐藏文件或文件夹（如 .git、.vscode）</span>
+                  <label class="switch">
+                    <input type="checkbox" :checked="showHiddenFiles" @change="saveShowHiddenFiles" />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </template>
+
+            <template v-else-if="activeNav === 'shortcuts'">
+              <h3 class="pref-section-title">快捷键</h3>
+              <div class="shortcut-list">
+                <div v-for="item in shortcuts" :key="item.keys" class="shortcut-row">
+                  <span class="shortcut-keys">{{ item.keys }}</span>
+                  <span class="shortcut-desc">{{ item.desc }}</span>
+                </div>
+              </div>
+            </template>
+
+            <template v-else-if="activeNav === 'image'">
               <h3 class="pref-section-title">图像</h3>
 
               <div class="pref-field">
@@ -70,7 +111,7 @@
                 <div class="about-row">
                   <span class="about-hint">启动后自动检查新版本</span>
                   <label class="switch">
-                    <input type="checkbox" v-model="autoCheckUpdate" @change="saveAutoCheckUpdate" />
+                    <input type="checkbox" :checked="autoCheckUpdate" @change="saveAutoCheckUpdate" />
                     <span class="switch-slider"></span>
                   </label>
                 </div>
@@ -107,16 +148,35 @@
 </template>
 
 <script setup lang="ts">
-import { Picture, Refresh } from '@element-plus/icons-vue'
+import { Picture, Refresh, Setting, Key } from '@element-plus/icons-vue'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useEditorStore } from '../stores/editor'
 
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-const activeNav = ref<'image' | 'update'>('image')
+const store = useEditorStore()
+
+const activeNav = ref<'general' | 'shortcuts' | 'image' | 'update'>('general')
+const showHiddenFiles = ref(false)
 const imageSaveMode = ref<'assets' | 'filename-assets' | 'custom' | 'base64'>('assets')
 const imageSavePath = ref('')
+
+// 快捷键列表
+const shortcuts = [
+  { keys: 'Ctrl + N', desc: '新建文件' },
+  { keys: 'Ctrl + O', desc: '打开文件' },
+  { keys: 'Ctrl + Shift + O', desc: '打开文件夹' },
+  { keys: 'Ctrl + Shift + E', desc: '切换预览/编辑模式' },
+  { keys: 'Ctrl + Shift + I', desc: '打开 DevTools 调试工具' },
+  { keys: 'Ctrl + S', desc: '保存' },
+  { keys: 'Ctrl + Shift + S', desc: '另存为' },
+  { keys: 'Ctrl + F', desc: '打开搜索框' },
+  { keys: 'Ctrl + H', desc: '打开替换框' },
+  { keys: 'Ctrl + W', desc: '关闭当前文件' },
+  { keys: 'Ctrl + ,', desc: '打开偏好设置' }
+]
 
 // 更新相关状态
 const appVersion = ref('')
@@ -194,17 +254,38 @@ async function restartInstall() {
   await window.electronAPI.quitAndInstall()
 }
 
-async function saveAutoCheckUpdate() {
+async function saveAutoCheckUpdate(e: Event) {
+  const checked = (e.target as HTMLInputElement).checked
+  autoCheckUpdate.value = checked
   try {
-    await window.electronAPI.setConfig('autoCheckUpdate', autoCheckUpdate.value)
+    await window.electronAPI.setConfig('autoCheckUpdate', checked)
   } catch (err) {
     console.warn('[Preferences] Failed to save autoCheckUpdate:', err)
+  }
+}
+
+async function saveShowHiddenFiles(e: Event) {
+  // 直接从事件读取复选框状态，避免 v-model 更新时机导致的滞后
+  const checked = (e.target as HTMLInputElement).checked
+  showHiddenFiles.value = checked
+  try {
+    await window.electronAPI.setConfig('showHiddenFiles', checked)
+    // 刷新所有已打开文件夹，使隐藏文件设置立即生效
+    for (const folder of store.folders) {
+      await store.reloadFolderTree(folder.id)
+    }
+  } catch (err) {
+    console.warn('[Preferences] Failed to save showHiddenFiles:', err)
   }
 }
 
 async function loadConfig() {
   try {
     const config = await window.electronAPI.getConfig()
+    const showHidden = config.showHiddenFiles as boolean | undefined
+    if (typeof showHidden === 'boolean') {
+      showHiddenFiles.value = showHidden
+    }
     const mode = config.imageSaveMode as string | undefined
     if (mode === 'assets' || mode === 'filename-assets' || mode === 'custom' || mode === 'base64') {
       imageSaveMode.value = mode
@@ -424,6 +505,36 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.6;
   color: var(--text-muted);
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.shortcut-keys {
+  color: var(--accent, #569cd6);
+  font-family: Consolas, 'Cascadia Code', monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.shortcut-desc {
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .about-version {

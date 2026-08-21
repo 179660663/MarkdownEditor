@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
 import { join, relative, basename, extname, resolve, dirname, normalize, isAbsolute } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, stat, rename } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -28,6 +29,7 @@ let store: Store<{
   recentFiles: RecentFile[]
   folders: { path: string; name: string; collapsed: boolean }[]
   autoCheckUpdate: boolean
+  showHiddenFiles: boolean
 }>
 
 process.env.DIST_ELECTRON = join(__dirname, '..')
@@ -148,6 +150,7 @@ function initStore() {
       recentFiles: RecentFile[]
       folders: { path: string; name: string; collapsed: boolean }[]
       autoCheckUpdate: boolean
+      showHiddenFiles: boolean
     }>()
     console.log('[Main] electron-store initialized successfully')
   } catch (err) {
@@ -525,7 +528,38 @@ function readFileWithEncoding(filePath: string): string {
   return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
-async function buildFolderTree(folderPath: string, basePath: string, depth: number = 0): Promise<FileNode[]> {
+// 获取目录树中所有属性为隐藏的完整路径（Windows 隐藏属性，与是否以 . 开头无关）
+// 使用 PowerShell -EncodedCommand：Base64 编码避免引号转义问题，强制 UTF-8 输出避免乱码
+function getHiddenFullPaths(rootPath: string): Promise<Set<string>> {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve(new Set())
+      return
+    }
+    const escaped = rootPath.replace(/'/g, "''")
+    const psScript =
+      `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ` +
+      `Get-ChildItem -LiteralPath '${escaped}' -Force -Recurse -ErrorAction SilentlyContinue | ` +
+      `Where-Object { $_.Attributes -band [IO.FileAttributes]::Hidden } | ForEach-Object { $_.FullName }`
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { encoding: 'utf8', maxBuffer: 1024 * 1024 * 8 },
+      (err, stdout) => {
+        if (err) {
+          console.warn('[Main] PowerShell hidden detection failed:', err.message)
+          resolve(new Set())
+          return
+        }
+        const paths = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+        resolve(new Set(paths.map((p) => normalizePath(p))))
+      }
+    )
+  })
+}
+
+async function buildFolderTree(folderPath: string, basePath: string, depth: number = 0, hiddenPaths: Set<string> | null = null): Promise<FileNode[]> {
   if (depth > 10) return []
   const nodes: FileNode[] = []
   try {
@@ -533,6 +567,8 @@ async function buildFolderTree(folderPath: string, basePath: string, depth: numb
     const entriesWithStats = await Promise.all(
       entries.map(async (entry) => {
         const fullPath = join(folderPath, entry)
+        // 隐藏文件/文件夹：仅根据 Windows 隐藏属性判断显示与否
+        if (hiddenPaths?.has(normalizePath(fullPath))) return null
         try {
           const s = await stat(fullPath)
           return { entry, fullPath, isDir: s.isDirectory() }
@@ -556,7 +592,7 @@ async function buildFolderTree(folderPath: string, basePath: string, depth: numb
           name: entry,
           path: relPath,
           isDirectory: true,
-          children: await buildFolderTree(fullPath, basePath, depth + 1)
+          children: await buildFolderTree(fullPath, basePath, depth + 1, hiddenPaths)
         })
       } else {
         const ext = extname(entry).toLowerCase()
@@ -577,7 +613,10 @@ async function buildFolderTree(folderPath: string, basePath: string, depth: numb
 
 ipcMain.handle('list-folder', async (_event, folderPath: string) => {
   if (!folderPath || !existsSync(folderPath)) return []
-  return await buildFolderTree(folderPath, folderPath)
+  const showHidden = store?.get('showHiddenFiles', false) || false
+  const hiddenPaths = showHidden ? null : await getHiddenFullPaths(folderPath)
+  console.log('[Main] list-folder:', folderPath, 'showHidden:', showHidden, 'hiddenCount:', hiddenPaths?.size)
+  return await buildFolderTree(folderPath, folderPath, 0, hiddenPaths)
 })
 
 ipcMain.handle('save-file', (_event, filePath: string, content: string) => {
@@ -807,6 +846,12 @@ ipcMain.handle('window-close', () => {
   }
 })
 
+ipcMain.handle('open-devtools', () => {
+  if (win) {
+    win.webContents.openDevTools({ mode: 'detach' })
+  }
+})
+
 ipcMain.handle('get-app-version', () => {
   return app.getVersion()
 })
@@ -847,6 +892,56 @@ ipcMain.handle('show-item-in-folder', async (_event, basePath: string, relPath: 
   } catch (err) {
     console.error('[Shell] Failed to show item in folder:', basePath, relPath, err)
     return false
+  }
+})
+
+// 重命名后同步更新最近打开文件列表中的路径
+function remapRecentFilesAfterRename(oldPath: string, newPath: string) {
+  if (!store) return
+  const recent = store.get('recentFiles', []) as RecentFile[]
+  const oldNorm = normalizePath(oldPath)
+  const oldPrefix = oldNorm.endsWith('/') ? oldNorm : oldNorm + '/'
+  const newBase = newPath.replace(/[\\/]+$/, '')
+  let changed = false
+  const updated = recent.map((f) => {
+    const p = normalizePath(f.path)
+    if (p === oldNorm) {
+      changed = true
+      return { path: newPath, title: basename(newPath) }
+    }
+    if (p.startsWith(oldPrefix)) {
+      changed = true
+      return { ...f, path: newBase + f.path.slice(oldPath.length) }
+    }
+    return f
+  })
+  if (changed) {
+    store.set('recentFiles', updated)
+    console.log('[Main] Recent files updated after rename:', oldPath, '->', newPath)
+  }
+}
+
+ipcMain.handle('rename-item', async (_event, basePath: string, relPath: string, newName: string) => {
+  try {
+    const name = String(newName || '').trim()
+    if (!name) return { ok: false, error: '名称不能为空' }
+    if (/[\\/:*?"<>|]/.test(name) || name === '.' || name === '..') {
+      return { ok: false, error: '名称不能包含 \\ / : * ? " < > | 等字符' }
+    }
+    if (!basePath || !existsSync(basePath)) return { ok: false, error: '所在文件夹不存在' }
+    const oldPath = resolve(basePath, relPath)
+    if (!existsSync(oldPath)) return { ok: false, error: '文件或文件夹不存在' }
+    const newPath = join(dirname(oldPath), name)
+    if (normalizePath(oldPath) !== normalizePath(newPath)) {
+      if (existsSync(newPath)) return { ok: false, error: '已存在同名文件或文件夹' }
+      await rename(oldPath, newPath)
+      console.log('[Main] Renamed:', oldPath, '->', newPath)
+      remapRecentFilesAfterRename(oldPath, newPath)
+    }
+    return { ok: true, oldPath, newPath }
+  } catch (err) {
+    console.error('[Main] rename-item failed:', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 })
 

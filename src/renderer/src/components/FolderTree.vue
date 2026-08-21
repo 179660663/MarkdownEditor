@@ -20,7 +20,17 @@
             <el-icon v-if="isExpanded(node.path)" class="dropdown-icon"><FolderOpened /></el-icon>
             <el-icon v-else class="dropdown-icon"><Folder /></el-icon>
           </span> 
-          <span class="tree-label" :title="node.name">{{ node.name }}</span>
+          <span class="tree-label" v-if="renamingPath !== node.path" :title="node.name">{{ node.name }}</span>
+          <input
+            v-else
+            ref="renameInputEl"
+            v-model="renameValue"
+            class="tree-rename-input"
+            @click.stop
+            @keydown.enter.prevent="confirmRename(node)"
+            @keydown.esc.prevent="cancelRename"
+            @blur="confirmRename(node)"
+          />
           <span v-if="hasChildren(node)" class="tree-count">{{ countFiles(node) }}</span>
         </div>
         <div
@@ -32,7 +42,17 @@
         >
           <span class="tree-chevron-placeholder"></span>
           <span class="tree-icon">📄</span>
-          <span class="tree-label" :title="node.name">{{ node.name }}</span>
+          <span class="tree-label" v-if="renamingPath !== node.path" :title="node.name">{{ node.name }}</span>
+          <input
+            v-else
+            ref="renameInputEl"
+            v-model="renameValue"
+            class="tree-rename-input"
+            @click.stop
+            @keydown.enter.prevent="confirmRename(node)"
+            @keydown.esc.prevent="cancelRename"
+            @blur="confirmRename(node)"
+          />
         </div>
 
         <div
@@ -47,6 +67,8 @@
             :base-path="basePath"
             @select="$emit('select', $event)"
             @toggle="$emit('toggle', $event)"
+            @refresh="$emit('refresh')"
+            @renamed="$emit('renamed', $event)"
           />
         </div>
       </div>
@@ -65,14 +87,20 @@
           </el-icon>
           <span>打开文件位置</span>
         </div>
+        <div class="context-menu-item" @click="startRename(contextMenu.node)">
+          <el-icon class="context-menu-icon">
+            <EditPen />
+          </el-icon>
+          <span>重命名</span>
+        </div>
       </div>
     </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, onMounted, onBeforeUnmount } from 'vue'
-import { Folder, FolderOpened } from '@element-plus/icons-vue'
+import { reactive, ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
 
 defineOptions({ name: 'FolderTree' })
 
@@ -94,6 +122,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select', node: FileNode): void
   (e: 'toggle', path: string): void
+  (e: 'refresh'): void
+  (e: 'renamed', payload: { oldPath: string; newPath: string }): void
 }>()
 
 const contextMenu = reactive<{
@@ -125,6 +155,42 @@ function openFileLocation() {
     window.electronAPI.showItemInFolder(props.basePath, contextMenu.node.path)
   }
   closeContextMenu()
+}
+
+const renamingPath = ref<string | null>(null)
+const renameValue = ref('')
+const renameInputEl = ref<HTMLInputElement | null>(null)
+
+function startRename(node: FileNode | null) {
+  if (!node) return
+  renamingPath.value = node.path
+  renameValue.value = node.name
+  contextMenu.visible = false
+  contextMenu.node = null
+  nextTick(() => {
+    renameInputEl.value?.focus()
+    renameInputEl.value?.select()
+  })
+}
+
+async function confirmRename(node: FileNode) {
+  if (renamingPath.value !== node.path) return
+  const newName = renameValue.value.trim()
+  renamingPath.value = null
+  if (!newName || newName === node.name) return
+  const result = await window.electronAPI.renameItem(props.basePath, node.path, newName)
+  if (result && result.ok) {
+    if (result.oldPath && result.newPath) {
+      emit('renamed', { oldPath: result.oldPath, newPath: result.newPath })
+    }
+    emit('refresh')
+  } else {
+    alert(result?.error || '重命名失败')
+  }
+}
+
+function cancelRename() {
+  renamingPath.value = null
 }
 
 function onClickOutside() {
@@ -248,6 +314,18 @@ function handleDirectoryClick(node: FileNode) {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+}
+
+.tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
 }
 
 .tree-count {

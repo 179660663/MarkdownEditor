@@ -139,63 +139,78 @@
             <div class="folder-section">
             <div class="section-header">
               <span>文件夹浏览</span>
-              <div class="section-actions">
+              <div class="section-actions" v-if="store.folders.length > 0">
+                <button class="icon-action-btn" title="刷新文件夹" @click="handleRefreshFolders"><el-icon class="dropdown-icon"><Refresh /></el-icon></button>
                 <button class="icon-action-btn" title="展开全部" @click="handleExpandAll">⊞</button>
                 <button class="icon-action-btn" title="折叠全部" @click="handleCollapseAll">⊟</button>
-                <button class="icon-action-btn" title="打开文件夹" @click="handleOpenFolder"><el-icon class="dropdown-icon"><FolderOpened /></el-icon></button>
-                <button
-                  v-if="store.folders.length > 0"
-                  class="icon-action-btn"
-                  title="全部关闭"
-                  @click="handleCloseAllFolders"
-                >
-                  ✕
-                </button>
+                <button class="icon-action-btn"title="全部关闭"@click="handleCloseAllFolders">✕</button>
               </div>
             </div>
-            <div class="folder-list">
-              <div
-                v-for="folder in store.folders"
-                :key="folder.id"
-                class="folder-item"
-                :class="{ active: folder.id === store.activeFolderId }"
-              >
-                <div class="folder-item-header" @click="store.setActiveFolder(folder.id)" @contextmenu.prevent="handleFolderContextMenu($event, folder)">
-                  <button
-                    class="folder-item-toggle"
-                    @click.stop="toggleFolderCollapsed(folder.id)"
-                  >
-                    {{ folder.collapsed ? '▸' : '▾' }}
-                  </button>
-                  <el-icon class="dropdown-icon"><Folder /></el-icon>
-                  <span
-                    class="folder-item-name"
-                    :title="folder.path"
-                  > {{ folder.name }}
-                  </span>
-                  <span class="folder-item-path" :title="folder.path">{{ folder.path }}</span>
-                  <button
-                    class="folder-item-close"
-                    title="移除此文件夹"
-                    @click.stop="handleRemoveFolder(folder.id)"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div
-                  v-if="!folder.collapsed"
-                  class="folder-item-body"
+            <!-- 文件夹切换下拉框 -->
+            <div v-if="store.folders.length > 0" class="folder-switcher">
+              <el-icon class="folder-switcher-icon"><Folder /></el-icon>
+              <div class="folder-dropdown" ref="folderDropdownRef">
+                <button
+                  class="folder-dropdown-trigger"
+                  :title="activeFolder ? activeFolder.path : ''"
+                  @click="toggleFolderDropdown"
                 >
-                  <FolderTree
-                    :nodes="folder.tree"
-                    :expanded="folder.expanded"
-                    :active-path="activeFolderPath"
-                    :base-path="folder.path"
-                    @select="(node) => handleFolderFileSelect(node, folder.id)"
-                    @toggle="(path) => store.toggleFolderNode(folder.id, path)"
-                  />
+                  <span class="folder-dropdown-name">{{ activeFolder ? activeFolder.name : '' }}</span>
+                  <span class="folder-dropdown-arrow">▾</span>
+                </button>
+              </div>
+              <button
+                v-if="activeFolder"
+                class="folder-switcher-btn"
+                title="打开文件位置"
+                @click="openFolderLocationFor(activeFolder.path)"
+              >
+                <el-icon><FolderOpened /></el-icon>
+              </button>
+              <button
+                v-if="activeFolder"
+                class="folder-switcher-btn"
+                title="移除此文件夹"
+                @click="handleRemoveFolder(activeFolder.id)"
+              >
+                ✕
+              </button>
+            </div>
+            <!-- <div v-else class="folder-empty">暂无已打开文件夹</div> -->
+
+            <!-- 文件夹下拉菜单（Teleport 到 body，避免被侧边栏裁剪） -->
+            <Teleport to="body">
+              <div
+                v-if="folderDropdownOpen && store.folders.length > 0"
+                class="folder-dropdown-menu"
+                :style="{ left: folderDropdownRect.left + 'px', top: folderDropdownRect.top + 'px', minWidth: folderDropdownRect.width + 'px' }"
+              >
+                <div
+                  v-for="folder in store.folders"
+                  :key="folder.id"
+                  class="folder-dropdown-item"
+                  :class="{ active: folder.id === store.activeFolderId }"
+                  :title="folder.path"
+                  @click="selectFolder(folder.id)"
+                >
+                  <span class="folder-dropdown-item-name">{{ folder.name }}</span>
+                  <span class="folder-dropdown-item-path">({{ folder.path }})</span>
                 </div>
               </div>
+            </Teleport>
+
+            <!-- 仅显示活动文件夹的内容 -->
+            <div v-if="activeFolder" class="folder-tree-area">
+              <FolderTree
+                :nodes="activeFolder.tree"
+                :expanded="activeFolder.expanded"
+                :active-path="activeFolderPath"
+                :base-path="activeFolder.path"
+                @select="(node) => handleFolderFileSelect(node, activeFolder.id)"
+                @toggle="(path) => store.toggleFolderNode(activeFolder.id, path)"
+                @refresh="() => store.reloadFolderTree(activeFolder.id)"
+                @renamed="handleItemRenamed"
+              />
             </div>
           </div>
 
@@ -217,9 +232,21 @@
                 :key="file.path"
                 class="recent-item"
                 @click="handleOpenRecent(file.path)"
+                @contextmenu.prevent="handleFolderContextMenu($event, file.path, 'recent', file.title)"
                 :title="file.path"
               >
-                <span class="recent-title">{{ file.title }}</span>
+                <span v-if="renamingTarget?.type === 'recent' && renamingTarget.path === file.path" class="rename-inline">
+                  <input
+                    ref="renameInputEl"
+                    v-model="renameValue"
+                    class="rename-inline-input"
+                    @click.stop
+                    @keydown.enter.prevent="confirmSidebarRename()"
+                    @keydown.esc.prevent="cancelSidebarRename()"
+                    @blur="confirmSidebarRename()"
+                  />
+                </span>
+                <span v-else class="recent-title">{{ file.title }}</span>
               </div>
             </div>
             <!-- <div class="empty-hint" v-else>暂无最近文件</div> -->
@@ -237,14 +264,29 @@
                 ✕
               </button>
             </div>
-            <div
-              v-for="doc in documents"
-              :key="doc.id"
-              class="doc-item"
-              :class="{ active: doc.id === store.activeTabId }"
-              @click="handleSelect(doc.id)"
-            >
-              {{ doc.title }}
+            <div class="doc-list-content">
+              <div
+                v-for="doc in documents"
+                :key="doc.id"
+                class="doc-item"
+                :class="{ active: doc.id === store.activeTabId }"
+                @click="handleSelect(doc.id)"
+                @contextmenu.prevent="doc.filePath && handleFolderContextMenu($event, doc.filePath, 'doc', doc.title)"
+                :title="doc.filePath || doc.title"
+              >
+                <span v-if="renamingTarget?.type === 'doc' && renamingTarget.path === doc.filePath" class="rename-inline">
+                  <input
+                    ref="renameInputEl"
+                    v-model="renameValue"
+                    class="rename-inline-input"
+                    @click.stop
+                    @keydown.enter.prevent="confirmSidebarRename()"
+                    @keydown.esc.prevent="cancelSidebarRename()"
+                    @blur="confirmSidebarRename()"
+                  />
+                </span>
+                <span v-else>{{ doc.title }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -343,6 +385,12 @@
           </el-icon>
           <span>打开文件位置</span>
         </div>
+        <div v-if="folderContextMenu.type !== 'folder'" class="context-menu-item" @click="startSidebarRename">
+          <el-icon class="context-menu-icon">
+            <EditPen />
+          </el-icon>
+          <span>重命名</span>
+        </div>
       </div>
     </teleport>
   </div>
@@ -359,7 +407,7 @@ import TabBar from './components/TabBar.vue'
 import OutlineSidebar from './components/OutlineSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FolderTree from './components/FolderTree.vue'
-import { Document, Folder, FolderOpened, Download, CopyDocument, Setting, DocumentAdd } from '@element-plus/icons-vue'
+import { Document, Folder, FolderOpened, Download, CopyDocument, Setting, DocumentAdd, EditPen, Refresh } from '@element-plus/icons-vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 
 interface FileNode {
@@ -462,6 +510,29 @@ function closeMenu() {
 }
 
 const documents = computed(() => store.documents)
+
+const activeFolder = computed(() => store.folders.find((f) => f.id === store.activeFolderId) || null)
+
+// 文件夹下拉框状态
+const folderDropdownOpen = ref(false)
+const folderDropdownRect = ref({ left: 0, top: 0, width: 0 })
+const folderDropdownRef = ref<HTMLElement | null>(null)
+
+function toggleFolderDropdown() {
+  folderDropdownOpen.value = !folderDropdownOpen.value
+  if (folderDropdownOpen.value) {
+    const el = folderDropdownRef.value
+    if (el) {
+      const rect = el.getBoundingClientRect()
+      folderDropdownRect.value = { left: rect.left, top: rect.bottom + 4, width: rect.width }
+    }
+  }
+}
+
+function selectFolder(id: string) {
+  store.setActiveFolder(id)
+  folderDropdownOpen.value = false
+}
 
 const currentDoc = computed(() => {
   if (!store.activeTabId) return { title: '', content: '', filePath: undefined }
@@ -573,6 +644,10 @@ function handleNew() {
 
 function handleSelect(id: string) {
   store.setActiveTab(id)
+  const doc = store.getDocument(id)
+  if (doc?.filePath) {
+    selectFileInTree(doc.filePath)
+  }
 }
 
 function handleModeChange(mode: 'edit' | 'preview') {
@@ -710,10 +785,34 @@ async function handleFolderFileSelect(node: FileNode, folderId: string) {
   }
 }
 
-function toggleFolderCollapsed(folderId: string) {
-  const folder = store.getFolderById(folderId)
-  if (folder) {
-    store.setFolderCollapsed(folderId, !folder.collapsed)
+function handleItemRenamed(payload: { oldPath: string; newPath: string }) {
+  store.updateDocPathsAfterRename(payload.oldPath, payload.newPath)
+  // 主进程已同步更新最近打开文件列表，重新加载
+  store.loadRecentFiles().catch((e) => console.warn('[App] Reload recent files failed:', e))
+}
+
+// 在文件夹树中选中并展开某个文件（用于从最近打开文件/已打开文件列表跳转）
+function selectFileInTree(fullPath: string) {
+  const fullNorm = fullPath.toLowerCase()
+  for (const folder of store.folders) {
+    const base = folder.path.replace(/[\\/]+$/, '')
+    const baseNorm = base.toLowerCase()
+    if (fullNorm !== baseNorm && !fullNorm.startsWith(baseNorm + '\\') && !fullNorm.startsWith(baseNorm + '/')) {
+      continue
+    }
+    const rel = fullPath.slice(base.length).replace(/^[\\/]+/, '')
+    const sep = rel.includes('\\') ? '\\' : '/'
+    store.setActiveFolder(folder.id)
+    activeFolderPath.value = rel
+    if (folder.collapsed) store.setFolderCollapsed(folder.id, false)
+    // 展开祖先目录，使文件可见
+    const parts = rel.split(/[\\/]+/).slice(0, -1)
+    let acc = ''
+    for (const part of parts) {
+      acc = acc ? acc + sep + part : part
+      store.expandFolderNode(folder.id, acc)
+    }
+    return
   }
 }
 
@@ -730,14 +829,20 @@ function handleCloseAllFolders() {
 }
 
 function handleExpandAll() {
-  for (const folder of store.folders) {
-    store.expandAllFolderNodes(folder.id)
+  if (store.activeFolderId) {
+    store.expandAllFolderNodes(store.activeFolderId)
+  }
+}
+
+async function handleRefreshFolders() {
+  if (store.activeFolderId) {
+    await store.reloadFolderTree(store.activeFolderId)
   }
 }
 
 function handleCollapseAll() {
-  for (const folder of store.folders) {
-    store.collapseAllFolderNodes(folder.id)
+  if (store.activeFolderId) {
+    store.collapseAllFolderNodes(store.activeFolderId)
   }
 }
 
@@ -749,41 +854,100 @@ const folderContextMenu = reactive<{
   visible: boolean
   x: number
   y: number
-  folderId: string | null
+  path: string | null
+  type: 'folder' | 'recent' | 'doc'
+  name: string
 }>({
   visible: false,
   x: 0,
   y: 0,
-  folderId: null
+  path: null,
+  type: 'folder',
+  name: ''
 })
 
-function handleFolderContextMenu(event: MouseEvent, folder: { id: string; path: string }) {
+function handleFolderContextMenu(event: MouseEvent, path: string, type: 'folder' | 'recent' | 'doc' = 'folder', name = '') {
   folderContextMenu.visible = true
   folderContextMenu.x = event.clientX
   folderContextMenu.y = event.clientY
-  folderContextMenu.folderId = folder.id
+  folderContextMenu.path = path
+  folderContextMenu.type = type
+  folderContextMenu.name = name
 }
 
 function closeFolderContextMenu() {
   folderContextMenu.visible = false
-  folderContextMenu.folderId = null
+  folderContextMenu.path = null
 }
 
 function openFolderLocation() {
-  const folder = store.folders.find((f) => f.id === folderContextMenu.folderId)
-  if (folder) {
-    window.electronAPI.showItemInFolder(folder.path, '')
+  if (folderContextMenu.path) {
+    window.electronAPI.showItemInFolder('', folderContextMenu.path)
   }
   closeFolderContextMenu()
 }
 
-function onContextMenuClickOutside() {
+function openFolderLocationFor(path: string) {
+  window.electronAPI.showItemInFolder('', path)
+}
+
+// 侧边栏列表（最近打开文件 / 已打开文件列表）内联重命名
+const renamingTarget = ref<{ type: 'recent' | 'doc'; path: string } | null>(null)
+const renameValue = ref('')
+const renameInputEl = ref<HTMLInputElement | null>(null)
+
+function splitPath(p: string): { dir: string; name: string } {
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (idx === -1) return { dir: '', name: p }
+  return { dir: p.slice(0, idx), name: p.slice(idx + 1) }
+}
+
+function startSidebarRename() {
+  if (!folderContextMenu.path) return
+  renamingTarget.value = { type: folderContextMenu.type === 'folder' ? 'doc' : folderContextMenu.type, path: folderContextMenu.path }
+  renameValue.value = folderContextMenu.name
+  folderContextMenu.visible = false
+  nextTick(() => {
+    renameInputEl.value?.focus()
+    renameInputEl.value?.select()
+  })
+}
+
+async function confirmSidebarRename() {
+  const target = renamingTarget.value
+  if (!target) return
+  const newName = renameValue.value.trim()
+  renamingTarget.value = null
+  if (!newName || newName === splitPath(target.path).name) return
+  const { dir, name } = splitPath(target.path)
+  const result = await window.electronAPI.renameItem(dir, name, newName)
+  if (result && result.ok) {
+    if (result.oldPath && result.newPath) {
+      store.updateDocPathsAfterRename(result.oldPath, result.newPath)
+    }
+    store.loadRecentFiles().catch((e) => console.warn('[App] Reload recent files failed:', e))
+  } else {
+    alert(result?.error || '重命名失败')
+  }
+}
+
+function cancelSidebarRename() {
+  renamingTarget.value = null
+}
+
+function onContextMenuClickOutside(e: MouseEvent) {
   closeFolderContextMenu()
+  // 点击文件夹下拉框外部时关闭下拉
+  const el = folderDropdownRef.value
+  if (el && !el.contains(e.target as Node)) {
+    folderDropdownOpen.value = false
+  }
 }
 
 function onContextMenuKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     closeFolderContextMenu()
+    folderDropdownOpen.value = false
   }
 }
 
@@ -792,6 +956,22 @@ async function handleGlobalKeyDown(e: KeyboardEvent) {
   // 调试日志：检测快捷键
   if (e.ctrlKey || e.metaKey) {
     console.log('[Shortcut] Key pressed:', e.key, 'Ctrl:', e.ctrlKey, 'Meta:', e.metaKey)
+  }
+
+  // Ctrl/Cmd + H: 打开替换框（全局可用）
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'h') {
+    e.preventDefault()
+    if (editorRef.value) {
+      editorRef.value.openReplaceBox()
+    }
+    return
+  }
+
+  // Ctrl/Cmd + Shift + I: 打开 DevTools 调试工具（全局可用）
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+    e.preventDefault()
+    window.electronAPI.openDevTools()
+    return
   }
 
   // Ctrl/Cmd + F: 打开搜索框（全局可用）
@@ -883,6 +1063,7 @@ async function handleOpenRecent(path: string) {
   const existingDoc = store.getDocumentByPath(path)
   if (existingDoc) {
     store.setActiveTab(existingDoc.id)
+    selectFileInTree(path)
     return
   }
   const result = await store.openFilePath(path)
@@ -892,6 +1073,7 @@ async function handleOpenRecent(path: string) {
     const id = store.addDocument(title, result.content, result.path, 'preview')
     store.addTab(id, title)
     store.setActiveTab(id)
+    selectFileInTree(result.path)
   }
 }
 
@@ -1221,7 +1403,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   padding: 12px;
-  overflow-y: auto;
+  overflow: hidden;
   flex: 1;
   gap: 12px;
 }
@@ -1263,8 +1445,9 @@ onUnmounted(() => {
 
 .sidebar-actions {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .sidebar-title {
@@ -1294,23 +1477,33 @@ onUnmounted(() => {
 }
 
 .new-btn {
-  background: var(--accent);
-  color: white;
-  border: none;
-  padding: 8px 12px;
+  flex: 1;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 5px 4px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .new-btn:hover {
-  filter: brightness(1.1);
+  background: var(--bg-primary);
+  border-color: var(--accent);
 }
 
 .folder-section {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 2;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
 }
 
 .folder-open-btn {
@@ -1339,110 +1532,137 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.folder-list {
+.folder-switcher {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.folder-item {
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  border-radius: 8px;
-  margin-bottom: 10px;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
   background: var(--bg-primary);
-  overflow: hidden;
 }
 
-.folder-item.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+.folder-switcher-icon {
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
-.folder-item-header {
+.folder-dropdown {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-dropdown-trigger {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 10px;
-  font-size: 12px;
-  background: var(--bg-tertiary);
-  cursor: pointer;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
-}
-
-.folder-item.active .folder-item-header {
-  background: var(--bg-tertiary);
-  border-bottom-color: var(--accent);
-}
-
-.folder-item-toggle {
+  width: 100%;
   background: transparent;
   border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 9px;
-  padding: 0;
-  width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.folder-item-toggle:hover {
+  outline: none;
   color: var(--text-primary);
+  font-size: 12px;
+  padding: 2px 4px;
+  cursor: pointer;
 }
 
-.folder-item-name {
-  font-weight: 600;
-  white-space: nowrap;
+.folder-dropdown-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
-  max-width: 120px;
+  white-space: nowrap;
+  text-align: left;
 }
 
-.folder-item-path {
+.folder-dropdown-arrow {
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.folder-dropdown-menu {
+  position: fixed;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 3px 0;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 9999;
+  max-width: 480px;
+}
+
+.folder-dropdown-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.folder-dropdown-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.folder-dropdown-item.active {
+  background: var(--bg-tertiary);
+}
+
+.folder-dropdown-item-name {
+  flex-shrink: 0;
+}
+
+.folder-dropdown-item-path {
   font-size: 10px;
   color: var(--text-muted);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
   flex: 1;
 }
 
-.folder-item-close {
+.folder-switcher-btn {
   background: transparent;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   padding: 2px 4px;
   border-radius: 3px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.folder-item-close:hover {
-  background: #f0d2d5;
-  color: #fff;
-}
-
-.folder-item-body {
-  padding: 4px 8px 8px;
-  background: var(--bg-primary);
-}
-
-.folder-item-placeholder {
-  display: none;
-}
-
-.folder-path {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 4px 6px;
+.folder-switcher-btn:hover {
+  color: var(--text-primary);
   background: var(--bg-tertiary);
-  border-radius: 3px;
-  word-break: break-all;
+}
+
+.folder-tree-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  padding: 4px 8px 8px;
+}
+
+.folder-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 12px 8px;
+  text-align: center;
 }
 
 .section-actions {
@@ -1474,6 +1694,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
 }
 
 .section-header {
@@ -1485,12 +1710,16 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 4px;
+  flex-shrink: 0;
 }
 
 .recent-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .recent-item {
@@ -1501,6 +1730,7 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .recent-item:hover {
@@ -1513,6 +1743,24 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+.rename-inline {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.rename-inline-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
 .empty-hint {
   font-size: 12px;
   color: var(--text-muted);
@@ -1523,6 +1771,20 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.doc-list-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .doc-item {
@@ -1533,6 +1795,7 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .doc-item:hover {

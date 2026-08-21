@@ -24,8 +24,11 @@ try {
     windowMinimize: () => ipcRenderer.invoke('window-minimize'),
     windowMaximize: () => ipcRenderer.invoke('window-maximize'),
     windowClose: () => ipcRenderer.invoke('window-close'),
+    openDevTools: () => ipcRenderer.invoke('open-devtools'),
     openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
     showItemInFolder: (basePath: string, relPath: string) => ipcRenderer.invoke('show-item-in-folder', basePath, relPath),
+    renameItem: (basePath: string, relPath: string, newName: string) =>
+      ipcRenderer.invoke('rename-item', basePath, relPath, newName),
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) =>
       ipcRenderer.invoke('save-folders', folders),
     loadFolders: () => ipcRenderer.invoke('load-folders'),

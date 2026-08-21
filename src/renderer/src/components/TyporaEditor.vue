@@ -104,25 +104,40 @@
       <div v-if="showJumpHint" class="jump-hint">{{ showJumpHint }}</div>
     </Transition>
 
-    <!-- 内容搜索框 -->
+    <!-- 内容搜索/替换框 -->
     <Transition name="search-box">
       <div v-if="showSearchBox" class="content-search-box">
-        <input
-          ref="searchInput"
-          v-model="searchQuery"
-          type="text"
-          class="content-search-input"
-          placeholder="搜索内容..."
-        />
-        <span v-if="searchMatchCount > 0" class="content-search-count">
-          {{ searchCurrentMatch + 1 }}/{{ searchMatchCount }}
-        </span>
-        <span v-else-if="searchQuery" class="content-search-count no-match">
-          无匹配
-        </span>
-        <button class="content-search-btn" title="上一个 (Shift+Enter)" @click="findPrev">↑</button>
-        <button class="content-search-btn" title="下一个 (Enter)" @click="findNext">↓</button>
-        <button class="content-search-btn close" title="关闭 (Esc)" @click="closeSearchBox">✕</button>
+        <div class="content-search-row">
+          <input
+            ref="searchInput"
+            v-model="searchQuery"
+            type="text"
+            class="content-search-input"
+            placeholder="搜索内容..."
+          />
+          <span v-if="searchMatchCount > 0" class="content-search-count">
+            {{ searchCurrentMatch + 1 }}/{{ searchMatchCount }}
+          </span>
+          <span v-else-if="searchQuery" class="content-search-count no-match">
+            无匹配
+          </span>
+          <button class="content-search-btn" title="上一个 (Shift+Enter)" @click="findPrev">↑</button>
+          <button class="content-search-btn" title="下一个 (Enter)" @click="findNext">↓</button>
+          <button class="content-search-btn close" title="关闭 (Esc)" @click="closeSearchBox">✕</button>
+        </div>
+        <div v-if="showReplace" class="content-search-row">
+          <input
+            ref="replaceInput"
+            v-model="replaceQuery"
+            type="text"
+            class="content-search-input"
+            placeholder="替换为..."
+            @keydown.enter.stop.prevent="replaceOne"
+            @keydown.esc.stop.prevent="closeSearchBox"
+          />
+          <button class="content-search-btn replace" title="替换当前匹配" @click="replaceOne">替换</button>
+          <button class="content-search-btn replace" title="替换全部" @click="replaceAll">全部替换</button>
+        </div>
       </div>
     </Transition>
 
@@ -766,6 +781,11 @@ const searchMatchCount = ref(0)
 const searchInput = ref<HTMLInputElement | null>(null)
 let searchMarkers: { start: number; end: number }[] = []
 
+// 替换相关
+const showReplace = ref(false)
+const replaceQuery = ref('')
+const replaceInput = ref<HTMLInputElement | null>(null)
+
 function getTextareaMetrics(): { lineHeight: number; paddingTop: number } {
   const ta = textarea.value
   if (!ta) return { lineHeight: 25.5, paddingTop: 24 }
@@ -1051,6 +1071,13 @@ function handleKeydown(e: KeyboardEvent) {
       const lineEnd = value.indexOf('\n', start)
       const endPos = lineEnd === -1 ? value.length : lineEnd
       ta.selectionStart = ta.selectionEnd = endPos
+      return
+    }
+
+    // Ctrl+H: 打开替换框
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'h') {
+      e.preventDefault()
+      openReplaceBox()
       return
     }
 
@@ -1377,9 +1404,17 @@ function openSearchBox() {
   })
 }
 
+// 打开替换框（搜索框 + 替换行）
+function openReplaceBox() {
+  showReplace.value = true
+  openSearchBox()
+}
+
 function closeSearchBox() {
   showSearchBox.value = false
+  showReplace.value = false
   searchQuery.value = ''
+  replaceQuery.value = ''
   clearSearchHighlights()
   // 返回焦点到编辑器
   if (mode.value === 'edit' && textarea.value) {
@@ -1579,6 +1614,78 @@ function findPrev() {
   if (searchMarkers.length === 0) return
   searchCurrentMatch.value = (searchCurrentMatch.value - 1 + searchMarkers.length) % searchMarkers.length
   navigateToMatch()
+}
+
+// 从指定位置重新建立搜索标记，并定位到第一个匹配项
+function rebuildSearchMarkers(fromIndex = 0) {
+  const query = searchQuery.value
+  if (!query) {
+    searchMatchCount.value = 0
+    searchCurrentMatch.value = 0
+    searchMarkers = []
+    clearSearchHighlights()
+    return
+  }
+  const text = content.value
+  searchMarkers = []
+  let index = text.toLowerCase().indexOf(query.toLowerCase(), fromIndex)
+  while (index !== -1) {
+    searchMarkers.push({ start: index, end: index + query.length })
+    index = text.toLowerCase().indexOf(query.toLowerCase(), index + 1)
+  }
+  searchMatchCount.value = searchMarkers.length
+  searchCurrentMatch.value = 0
+  searchHighlightInitialized = false
+  highlightSearchMatches()
+}
+
+// 替换当前匹配项
+function replaceOne() {
+  if (searchMarkers.length === 0) return
+  const marker = searchMarkers[searchCurrentMatch.value]
+  const newContent =
+    content.value.substring(0, marker.start) +
+    replaceQuery.value +
+    content.value.substring(marker.end)
+  content.value = newContent
+  emit('update:modelValue', newContent)
+  scheduleRender()
+  // 从替换位置之后继续搜索并定位到下一个匹配项
+  rebuildSearchMarkers(marker.start + replaceQuery.value.length)
+  if (searchMarkers.length > 0) {
+    navigateToMatch()
+  }
+  // 焦点保持在替换输入框，便于连续按回车逐个替换
+  replaceInput.value?.focus()
+}
+
+// 替换所有匹配项
+function replaceAll() {
+  const query = searchQuery.value
+  if (!query) return
+  const text = content.value
+  const lower = text.toLowerCase()
+  const qLower = query.toLowerCase()
+  let result = ''
+  let lastIndex = 0
+  let index = lower.indexOf(qLower)
+  let count = 0
+  while (index !== -1) {
+    result += text.substring(lastIndex, index) + replaceQuery.value
+    lastIndex = index + query.length
+    count++
+    index = lower.indexOf(qLower, lastIndex)
+  }
+  result += text.substring(lastIndex)
+  if (count === 0) return
+  content.value = result
+  emit('update:modelValue', result)
+  scheduleRender()
+  rebuildSearchMarkers(0)
+  if (searchMarkers.length > 0) {
+    navigateToMatch()
+  }
+  replaceInput.value?.focus()
 }
 
 function navigateToMatch() {
@@ -1806,6 +1913,7 @@ defineExpose({
   jumpToLine,
   toggleMode,
   openSearchBox,
+  openReplaceBox,
   closeSearchBox,
   findNext,
   findPrev,
@@ -2297,14 +2405,20 @@ defineExpose({
   top: 12px;
   right: 12px;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 6px 10px;
   z-index: 100;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.content-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .content-search-input {
@@ -2350,6 +2464,15 @@ defineExpose({
 .content-search-btn.close:hover {
   background: #e81123;
   color: #fff;
+}
+
+.content-search-btn.replace {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.content-search-btn.replace:hover {
+  color: var(--text-primary);
 }
 
 /* 搜索框动画 */
