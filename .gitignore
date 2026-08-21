@@ -12,3 +12,4 @@ Thumbs.db
 .cache
 release
 package-lock.json
+publish.bat

@@ -36,7 +36,15 @@ try {
       data: ArrayBuffer
       mode: 'assets' | 'filename-assets' | 'custom'
       customPath?: string
-    }) => ipcRenderer.invoke('save-image', args)
+    }) => ipcRenderer.invoke('save-image', args),
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
+    onUpdateStatus: (callback: (data: { status: string; payload?: unknown }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { status: string; payload?: unknown }) => callback(data)
+      ipcRenderer.on('update-status', listener)
+      return () => ipcRenderer.removeListener('update-status', listener)
+    }
   })
   console.log('[Preload] electronAPI exposed successfully')
 } catch (err) {

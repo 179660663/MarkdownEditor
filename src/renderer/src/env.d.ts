@@ -42,5 +42,9 @@ interface Window {
       mode: 'assets' | 'filename-assets' | 'custom'
       customPath?: string
     }) => Promise<{ savedPath: string; insertPath: string } | null>
+    getAppVersion: () => Promise<string>
+    checkForUpdates: () => Promise<{ ok: boolean; message?: string }>
+    quitAndInstall: () => Promise<boolean>
+    onUpdateStatus: (callback: (data: { status: string; payload?: unknown }) => void) => () => void
   }
 }

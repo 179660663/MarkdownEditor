@@ -3,6 +3,7 @@ import { join, relative, basename, extname, resolve, dirname, normalize, isAbsol
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import Store from 'electron-store'
+import { autoUpdater } from 'electron-updater'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import * as jschardet from 'jschardet'
 import * as iconv from 'iconv-lite'
@@ -26,6 +27,7 @@ let store: Store<{
   windowBounds: { x: number; y: number; width: number; height: number }
   recentFiles: RecentFile[]
   folders: { path: string; name: string; collapsed: boolean }[]
+  autoCheckUpdate: boolean
 }>
 
 process.env.DIST_ELECTRON = join(__dirname, '..')
@@ -145,11 +147,77 @@ function initStore() {
       windowBounds: { x: number; y: number; width: number; height: number }
       recentFiles: RecentFile[]
       folders: { path: string; name: string; collapsed: boolean }[]
+      autoCheckUpdate: boolean
     }>()
     console.log('[Main] electron-store initialized successfully')
   } catch (err) {
     console.error('[Main] Failed to initialize electron-store:', err)
     store = null as any
+  }
+}
+
+// ---------- 自动更新 ----------
+function setupAutoUpdater() {
+  // 开发模式（未打包）下 electron-updater 无法工作
+  if (!app.isPackaged) {
+    console.log('[Updater] Running in dev mode, auto-updater disabled')
+    return
+  }
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.logger = console
+
+  const sendStatus = (status: string, payload?: unknown) => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update-status', { status, payload })
+    }
+  }
+
+  autoUpdater.on('checking-for-update', () => sendStatus('checking-for-update'))
+  autoUpdater.on('update-available', (info) => sendStatus('update-available', info))
+  autoUpdater.on('update-not-available', (info) => sendStatus('update-not-available', info))
+  autoUpdater.on('error', (err) => {
+    console.error('[Updater] Error:', err)
+    sendStatus('error', err instanceof Error ? err.message : String(err))
+  })
+  autoUpdater.on('download-progress', (progress) =>
+    sendStatus('download-progress', {
+      percent: progress.percent,
+      transferred: progress.transferred,
+      total: progress.total,
+      bytesPerSecond: progress.bytesPerSecond
+    })
+  )
+  autoUpdater.on('update-downloaded', async (info) => {
+    sendStatus('update-downloaded', info)
+    // 询问用户是否立即重启安装
+    if (win && !win.isDestroyed()) {
+      const result = await dialog.showMessageBox(win, {
+        type: 'info',
+        buttons: ['立即重启安装', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+        title: '更新已下载',
+        message: `新版本 ${info.version} 已下载完成`,
+        detail: '点击「立即重启安装」将关闭并安装新版本。'
+      })
+      if (result.response === 0) {
+        setImmediate(() => autoUpdater.quitAndInstall())
+      }
+    }
+  })
+}
+
+// 启动后自动检查更新（可在偏好设置中关闭）
+async function autoCheckForUpdates() {
+  if (!app.isPackaged) return
+  try {
+    const enabled = store?.get('autoCheckUpdate', true)
+    if (enabled === false) return
+    await autoUpdater.checkForUpdates()
+  } catch (err) {
+    console.error('[Updater] Auto check failed:', err)
   }
 }
 
@@ -191,6 +259,10 @@ async function createWindow() {
 
   win.webContents.on('did-finish-load', () => {
     console.log('[Main] Window finished loading')
+    // 启动 3 秒后静默检查更新
+    setTimeout(() => {
+      autoCheckForUpdates()
+    }, 3000)
   })
 
   win.webContents.on('will-navigate', (event, navUrl) => {
@@ -320,7 +392,10 @@ registerCustomProtocols()
 app.whenReady().then(() => {
   // Setup protocol handler
   setupProtocolHandler()
-  
+
+  // Setup auto updater
+  setupAutoUpdater()
+
   createWindow().catch((err) => {
     console.error('[Main Process] Failed to create window:', err)
     app.quit()
@@ -730,6 +805,27 @@ ipcMain.handle('window-close', () => {
   if (win) {
     win.close()
   }
+})
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion()
+})
+
+ipcMain.handle('check-for-updates', async () => {
+  if (!app.isPackaged) {
+    return { ok: false, message: '开发模式下无法检查更新' }
+  }
+  try {
+    await autoUpdater.checkForUpdates()
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('quit-and-install', () => {
+  setImmediate(() => autoUpdater.quitAndInstall())
+  return true
 })
 
 ipcMain.handle('open-external', async (_event, url: string) => {
