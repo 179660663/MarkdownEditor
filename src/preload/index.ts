@@ -27,8 +27,10 @@ try {
     openDevTools: () => ipcRenderer.invoke('open-devtools'),
     openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
     showItemInFolder: (basePath: string, relPath: string) => ipcRenderer.invoke('show-item-in-folder', basePath, relPath),
-    renameItem: (basePath: string, relPath: string, newName: string) =>
-      ipcRenderer.invoke('rename-item', basePath, relPath, newName),
+    renameItem: (basePath: string, relPath: string, newName: string) => ipcRenderer.invoke('rename-item', basePath, relPath, newName),
+    createFile: (basePath: string, dirRelPath: string) => ipcRenderer.invoke('create-file', basePath, dirRelPath),
+    createDirectory: (basePath: string, dirRelPath: string) => ipcRenderer.invoke('create-directory', basePath, dirRelPath),
+    deleteItem: (basePath: string, relPath: string) => ipcRenderer.invoke('delete-item', basePath, relPath),
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) =>
       ipcRenderer.invoke('save-folders', folders),
     loadFolders: () => ipcRenderer.invoke('load-folders'),

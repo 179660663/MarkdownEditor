@@ -574,6 +574,20 @@ export const useEditorStore = defineStore('editor', () => {
     return basePath + '/' + file
   }
 
+  // 删除文件/文件夹后，关闭路径匹配的已打开文档标签
+  function closeTabsByPathPrefix(pathPrefix: string) {
+    const norm = normalizePath(pathPrefix).replace(/[\\/]+$/, '')
+    const prefix = norm + '/'
+    for (const tab of [...tabs.value]) {
+      const doc = documents.value.find((d) => d.id === tab.id)
+      if (!doc || !doc.filePath) continue
+      const p = normalizePath(doc.filePath)
+      if (p === norm || p.startsWith(prefix)) {
+        closeTab(tab.id)
+      }
+    }
+  }
+
   return {
     documents,
     currentFilePath,
@@ -627,6 +641,7 @@ export const useEditorStore = defineStore('editor', () => {
     setFolderCollapsed,
     reloadFolderTree,
     updateDocPathsAfterRename,
+    closeTabsByPathPrefix,
     getFullPath
   }
 })

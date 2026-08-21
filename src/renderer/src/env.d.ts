@@ -34,6 +34,9 @@ interface Window {
     openExternal: (url: string) => Promise<boolean>
     showItemInFolder: (basePath: string, relPath: string) => Promise<boolean>
     renameItem: (basePath: string, relPath: string, newName: string) => Promise<{ ok: boolean; error?: string; oldPath?: string; newPath?: string } | null>
+    createFile: (basePath: string, dirRelPath: string) => Promise<{ ok: boolean; error?: string; path?: string; name?: string; relPath?: string } | null>
+    createDirectory: (basePath: string, dirRelPath: string) => Promise<{ ok: boolean; error?: string; path?: string; name?: string; relPath?: string } | null>
+    deleteItem: (basePath: string, relPath: string) => Promise<{ ok: boolean; error?: string; path?: string } | null>
     saveFolders: (folders: { path: string; name: string; collapsed: boolean }[]) => Promise<boolean>
     loadFolders: () => Promise<{ path: string; name: string; collapsed: boolean }[]>
     showSaveConfirmDialog: (fileName: string) => Promise<'save' | 'dontSave' | 'cancel'>

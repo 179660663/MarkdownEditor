@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
 import { join, relative, basename, extname, resolve, dirname, normalize, isAbsolute } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from 'node:fs'
-import { readdir, stat, rename } from 'node:fs/promises'
+import { readdir, stat, rename, writeFile, mkdir, rm } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import Store from 'electron-store'
 import { autoUpdater } from 'electron-updater'
@@ -941,6 +941,80 @@ ipcMain.handle('rename-item', async (_event, basePath: string, relPath: string, 
     return { ok: true, oldPath, newPath }
   } catch (err) {
     console.error('[Main] rename-item failed:', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('create-file', async (_event, basePath: string, dirRelPath: string) => {
+  try {
+    if (!basePath || !existsSync(basePath)) return { ok: false, error: '文件夹不存在' }
+    const dirPath = dirRelPath ? resolve(basePath, dirRelPath) : basePath
+    if (!existsSync(dirPath)) return { ok: false, error: '文件夹不存在' }
+    // 生成不冲突的文件名：新建文档.md、新建文档 1.md……
+    let name = '新建文档.md'
+    let counter = 1
+    let fullPath = join(dirPath, name)
+    while (existsSync(fullPath)) {
+      name = `新建文档 ${counter}.md`
+      fullPath = join(dirPath, name)
+      counter++
+    }
+    await writeFile(fullPath, '', 'utf-8')
+    console.log('[Main] Created file:', fullPath)
+    return { ok: true, path: fullPath, name, relPath: relative(basePath, fullPath) }
+  } catch (err) {
+    console.error('[Main] create-file failed:', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('create-directory', async (_event, basePath: string, dirRelPath: string) => {
+  try {
+    if (!basePath || !existsSync(basePath)) return { ok: false, error: '文件夹不存在' }
+    const dirPath = dirRelPath ? resolve(basePath, dirRelPath) : basePath
+    if (!existsSync(dirPath)) return { ok: false, error: '文件夹不存在' }
+    // 生成不冲突的文件夹名：新建文件夹、新建文件夹 1……
+    let name = '新建文件夹'
+    let counter = 1
+    let fullPath = join(dirPath, name)
+    while (existsSync(fullPath)) {
+      name = `新建文件夹 ${counter}`
+      fullPath = join(dirPath, name)
+      counter++
+    }
+    await mkdir(fullPath)
+    console.log('[Main] Created directory:', fullPath)
+    return { ok: true, path: fullPath, name, relPath: relative(basePath, fullPath) }
+  } catch (err) {
+    console.error('[Main] create-directory failed:', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('delete-item', async (_event, basePath: string, relPath: string) => {
+  try {
+    if (!basePath || !existsSync(basePath)) return { ok: false, error: '文件夹不存在' }
+    const targetPath = resolve(basePath, relPath || '.')
+    if (!existsSync(targetPath)) return { ok: false, error: '文件或文件夹不存在' }
+    await rm(targetPath, { recursive: true, force: true })
+    console.log('[Main] Deleted:', targetPath)
+    // 从最近打开文件列表中移除被删除文件的记录
+    if (store) {
+      const recent = store.get('recentFiles', []) as RecentFile[]
+      const targetNorm = normalizePath(targetPath)
+      const targetPrefix = targetNorm.endsWith('/') ? targetNorm : targetNorm + '/'
+      const updated = recent.filter((f) => {
+        const p = normalizePath(f.path)
+        return p !== targetNorm && !p.startsWith(targetPrefix)
+      })
+      if (updated.length !== recent.length) {
+        store.set('recentFiles', updated)
+        console.log('[Main] Recent files updated after delete')
+      }
+    }
+    return { ok: true, path: targetPath }
+  } catch (err) {
+    console.error('[Main] delete-item failed:', err)
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 })

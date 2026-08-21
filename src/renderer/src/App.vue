@@ -143,7 +143,11 @@
                 <button class="icon-action-btn" title="刷新文件夹" @click="handleRefreshFolders"><el-icon class="dropdown-icon"><Refresh /></el-icon></button>
                 <button class="icon-action-btn" title="展开全部" @click="handleExpandAll">⊞</button>
                 <button class="icon-action-btn" title="折叠全部" @click="handleCollapseAll">⊟</button>
-                <button class="icon-action-btn"title="全部关闭"@click="handleCloseAllFolders">✕</button>
+                <button class="icon-action-btn" title="新建文件" @click="createFileInActiveFolder"><el-icon class="dropdown-icon"><DocumentAdd /></el-icon></button>
+                <button class="icon-action-btn" title="新建文件夹" @click="createFolderInActiveFolder"><el-icon class="dropdown-icon"><FolderAdd /></el-icon></button>
+                <button class="icon-action-btn" title="删除当前文件夹（从磁盘）" @click="handleDeleteActiveFolder"><el-icon class="dropdown-icon"><Delete /></el-icon></button>
+                <button class="icon-action-btn" title="全部关闭" @click="handleCloseAllFolders"><el-icon class="dropdown-icon"><Close /></el-icon></button>
+                
               </div>
             </div>
             <!-- 文件夹切换下拉框 -->
@@ -200,16 +204,20 @@
             </Teleport>
 
             <!-- 仅显示活动文件夹的内容 -->
-            <div v-if="activeFolder" class="folder-tree-area">
+            <div v-if="activeFolder" class="folder-tree-area" @contextmenu.prevent="handleTreeAreaContextMenu">
               <FolderTree
                 :nodes="activeFolder.tree"
                 :expanded="activeFolder.expanded"
                 :active-path="activeFolderPath"
                 :base-path="activeFolder.path"
+                :rename-request="treeRenameRequest"
                 @select="(node) => handleFolderFileSelect(node, activeFolder.id)"
                 @toggle="(path) => store.toggleFolderNode(activeFolder.id, path)"
                 @refresh="() => store.reloadFolderTree(activeFolder.id)"
                 @renamed="handleItemRenamed"
+                @create-file="(dirRelPath) => handleCreateFile(activeFolder, dirRelPath)"
+                @create-folder="(dirRelPath) => handleCreateFolder(activeFolder, dirRelPath)"
+                @delete="(payload) => handleDeleteItem(activeFolder, payload)"
               />
             </div>
           </div>
@@ -393,6 +401,29 @@
         </div>
       </div>
     </teleport>
+
+    <!-- 文件夹浏览区空白处右键菜单 -->
+    <teleport to="body">
+      <div
+        v-if="treeAreaMenu.visible"
+        class="context-menu"
+        :style="{ left: treeAreaMenu.x + 'px', top: treeAreaMenu.y + 'px' }"
+        @click.stop
+      >
+        <div class="context-menu-item" @click="createFileInActiveFolder">
+          <el-icon class="context-menu-icon">
+            <DocumentAdd />
+          </el-icon>
+          <span>新建文件</span>
+        </div>
+        <div class="context-menu-item" @click="createFolderInActiveFolder">
+          <el-icon class="context-menu-icon">
+            <FolderAdd />
+          </el-icon>
+          <span>新建文件夹</span>
+        </div>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -407,7 +438,7 @@ import TabBar from './components/TabBar.vue'
 import OutlineSidebar from './components/OutlineSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import FolderTree from './components/FolderTree.vue'
-import { Document, Folder, FolderOpened, Download, CopyDocument, Setting, DocumentAdd, EditPen, Refresh } from '@element-plus/icons-vue'
+import { Document, Folder, FolderOpened, Download, CopyDocument, Setting, DocumentAdd, EditPen, Refresh, FolderAdd, Delete, Close } from '@element-plus/icons-vue'
 import PreferencesDialog from './components/PreferencesDialog.vue'
 
 interface FileNode {
@@ -477,7 +508,8 @@ function stopResize() {
 }
 
 const activeFolderPath = ref<string | null>(null)
-
+// 新建文件后，触发文件夹树中的行内重命名（编辑文件名）
+const treeRenameRequest = ref<{ path: string; name: string; version: number } | null>(null)
 const activeMenu = ref<string | null>(null)
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -769,13 +801,16 @@ async function handleOpenFolder() {
 async function handleFolderFileSelect(node: FileNode, folderId: string) {
   const fullPath = store.getFullPath(node.path, folderId)
   activeFolderPath.value = node.path
+  await openFilePath(fullPath)
+}
 
+// 按完整路径打开文件（已打开则切换，否则新建文档）
+async function openFilePath(fullPath: string) {
   const existingDoc = store.getDocumentByPath(fullPath)
   if (existingDoc) {
     store.setActiveTab(existingDoc.id)
     return
   }
-
   const result = await store.openFilePath(fullPath)
   if (result) {
     const title = getFileName(result.path)
@@ -783,6 +818,140 @@ async function handleFolderFileSelect(node: FileNode, folderId: string) {
     store.addTab(id, title)
     store.setActiveTab(id)
   }
+}
+
+// 文件夹右键「新建文件」/ 文件夹空白处右键「新建文件」
+async function handleCreateFile(
+  folder: { id: string; path: string; name: string; tree: FileNode[]; expanded: Set<string>; collapsed: boolean },
+  dirRelPath: string
+) {
+  const result = await window.electronAPI.createFile(folder.path, dirRelPath)
+  if (!result || !result.ok) {
+    alert(result?.error || '新建文件失败')
+    return
+  }
+  // 刷新文件夹树
+  await store.reloadFolderTree(folder.id)
+  // 展开祖先目录，使新文件可见
+  if (result.relPath) {
+    const parts = result.relPath.split(/[\\/]+/).slice(0, -1)
+    let acc = ''
+    for (const part of parts) {
+      acc = acc ? acc + '\\' + part : part
+      store.expandFolderNode(folder.id, acc)
+    }
+    activeFolderPath.value = result.relPath
+  }
+  // 打开新文件
+  if (result.path) {
+    await openFilePath(result.path)
+  }
+  // 触发文件夹树中新建文件的行内重命名，便于直接编辑文件名
+  if (result.relPath && result.name) {
+    treeRenameRequest.value = { path: result.relPath, name: result.name, version: Date.now() }
+  }
+}
+
+// 文件夹浏览区空白处右键菜单
+const treeAreaMenu = reactive<{
+  visible: boolean
+  x: number
+  y: number
+}>({
+  visible: false,
+  x: 0,
+  y: 0
+})
+
+function handleTreeAreaContextMenu(event: MouseEvent) {
+  treeAreaMenu.visible = true
+  treeAreaMenu.x = event.clientX
+  treeAreaMenu.y = event.clientY
+}
+
+function closeTreeAreaMenu() {
+  treeAreaMenu.visible = false
+}
+
+// 在活动文件夹根目录新建文件
+function createFileInActiveFolder() {
+  closeTreeAreaMenu()
+  if (activeFolder.value) {
+    handleCreateFile(activeFolder.value, '')
+  }
+}
+
+// 新建文件夹（文件夹右键 / 头部按钮）
+async function handleCreateFolder(
+  folder: { id: string; path: string; name: string; tree: FileNode[]; expanded: Set<string>; collapsed: boolean },
+  dirRelPath: string
+) {
+  const result = await window.electronAPI.createDirectory(folder.path, dirRelPath)
+  if (!result || !result.ok) {
+    alert(result?.error || '新建文件夹失败')
+    return
+  }
+  await store.reloadFolderTree(folder.id)
+  if (result.relPath) {
+    // 展开新文件夹的祖先目录及新文件夹本身，使其可见
+    const parts = result.relPath.split(/[\\/]+/)
+    let acc = ''
+    for (const part of parts) {
+      acc = acc ? acc + '\\' + part : part
+      store.expandFolderNode(folder.id, acc)
+    }
+    activeFolderPath.value = null
+  }
+  // 触发文件夹树中的行内重命名，便于直接编辑文件夹名
+  if (result.relPath && result.name) {
+    treeRenameRequest.value = { path: result.relPath, name: result.name, version: Date.now() }
+  }
+}
+
+// 在活动文件夹根目录新建文件夹（头部按钮）
+function createFolderInActiveFolder() {
+  if (activeFolder.value) {
+    handleCreateFolder(activeFolder.value, '')
+  }
+}
+
+// 删除树中的文件或文件夹（右键菜单）
+async function handleDeleteItem(
+  folder: { id: string; path: string; name: string; tree: FileNode[]; expanded: Set<string>; collapsed: boolean },
+  payload: { relPath: string; isDirectory: boolean }
+) {
+  const fullPath = store.getFullPath(payload.relPath, folder.id)
+  const label = payload.isDirectory ? '文件夹' : '文件'
+  if (!window.confirm(`确定要删除${label}「${payload.relPath}」吗？此操作不可恢复。`)) return
+  const result = await window.electronAPI.deleteItem(folder.path, payload.relPath)
+  if (!result || !result.ok) {
+    alert(result?.error || '删除失败')
+    return
+  }
+  await store.reloadFolderTree(folder.id)
+  if (activeFolderPath.value === payload.relPath) {
+    activeFolderPath.value = null
+  }
+  // 关闭已打开的被删文件/文件夹内文档
+  store.closeTabsByPathPrefix(fullPath)
+  store.loadRecentFiles().catch((e) => console.warn('[App] Reload recent files failed:', e))
+}
+
+// 删除当前文件夹（头部按钮，从磁盘删除整个文件夹）
+async function handleDeleteActiveFolder() {
+  const folder = activeFolder.value
+  if (!folder) return
+  if (!window.confirm(`确定要删除文件夹「${folder.name}」及其所有内容吗？此操作不可恢复。`)) return
+  const result = await window.electronAPI.deleteItem(folder.path, '')
+  if (!result || !result.ok) {
+    alert(result?.error || '删除失败')
+    return
+  }
+  // 关闭该文件夹下所有已打开的文档
+  store.closeTabsByPathPrefix(folder.path)
+  // 从列表中移除该文件夹
+  store.removeFolder(folder.id)
+  store.loadRecentFiles().catch((e) => console.warn('[App] Reload recent files failed:', e))
 }
 
 function handleItemRenamed(payload: { oldPath: string; newPath: string }) {
@@ -937,6 +1106,7 @@ function cancelSidebarRename() {
 
 function onContextMenuClickOutside(e: MouseEvent) {
   closeFolderContextMenu()
+  closeTreeAreaMenu()
   // 点击文件夹下拉框外部时关闭下拉
   const el = folderDropdownRef.value
   if (el && !el.contains(e.target as Node)) {
@@ -947,6 +1117,7 @@ function onContextMenuClickOutside(e: MouseEvent) {
 function onContextMenuKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     closeFolderContextMenu()
+    closeTreeAreaMenu()
     folderDropdownOpen.value = false
   }
 }
@@ -1686,8 +1857,17 @@ onUnmounted(() => {
 }
 
 .icon-action-btn:hover {
-  color: var(--text-primary);
   background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.icon-action-btn.danger {
+  color: #e81123;
+}
+
+.icon-action-btn.danger:hover {
+  background: rgba(232, 17, 35, 0.15);
+  color: #e81123;
 }
 
 .recent-section {

@@ -6,7 +6,7 @@
           v-if="node.isDirectory"
           class="tree-row directory"
           @click="handleDirectoryClick(node)"
-          @contextmenu.prevent="handleContextMenu($event, node)"
+          @contextmenu.prevent.stop="handleContextMenu($event, node)"
         >
           <button
             v-if="hasChildren(node)"
@@ -26,6 +26,7 @@
             ref="renameInputEl"
             v-model="renameValue"
             class="tree-rename-input"
+            autofocus
             @click.stop
             @keydown.enter.prevent="confirmRename(node)"
             @keydown.esc.prevent="cancelRename"
@@ -38,7 +39,7 @@
           class="tree-row file"
           :class="{ active: activePath === node.path }"
           @click="$emit('select', node)"
-          @contextmenu.prevent="handleContextMenu($event, node)"
+          @contextmenu.prevent.stop="handleContextMenu($event, node)"
         >
           <span class="tree-chevron-placeholder"></span>
           <span class="tree-icon">📄</span>
@@ -48,6 +49,7 @@
             ref="renameInputEl"
             v-model="renameValue"
             class="tree-rename-input"
+            autofocus
             @click.stop
             @keydown.enter.prevent="confirmRename(node)"
             @keydown.esc.prevent="cancelRename"
@@ -65,10 +67,12 @@
             :active-path="activePath"
             :expanded="expanded"
             :base-path="basePath"
+            :rename-request="renameRequest"
             @select="$emit('select', $event)"
             @toggle="$emit('toggle', $event)"
             @refresh="$emit('refresh')"
             @renamed="$emit('renamed', $event)"
+            @create-file="$emit('createFile', $event)"
           />
         </div>
       </div>
@@ -81,6 +85,18 @@
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
         @click.stop
       >
+        <div class="context-menu-item" v-if="contextMenu.node?.isDirectory" @click="createFileInFolder">
+          <el-icon class="context-menu-icon">
+            <DocumentAdd />
+          </el-icon>
+          <span>新建文件</span>
+        </div>
+        <div class="context-menu-item" v-if="contextMenu.node?.isDirectory" @click="createFolderInFolder">
+          <el-icon class="context-menu-icon">
+            <FolderAdd />
+          </el-icon>
+          <span>新建文件夹</span>
+        </div>
         <div class="context-menu-item" @click="openFileLocation">
           <el-icon class="context-menu-icon">
             <FolderOpened />
@@ -93,14 +109,21 @@
           </el-icon>
           <span>重命名</span>
         </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" @click="deleteNode">
+          <el-icon class="context-menu-icon">
+            <Delete />
+          </el-icon>
+          <span>删除</span>
+        </div>
       </div>
     </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { Folder, FolderOpened, EditPen } from '@element-plus/icons-vue'
+import { reactive, ref, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
+import { Folder, FolderOpened, EditPen, DocumentAdd, FolderAdd, Delete } from '@element-plus/icons-vue'
 
 defineOptions({ name: 'FolderTree' })
 
@@ -117,6 +140,7 @@ const props = defineProps<{
   activePath?: string | null
   expanded: Set<string>
   basePath: string
+  renameRequest?: { path: string; name: string; version: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -124,6 +148,9 @@ const emit = defineEmits<{
   (e: 'toggle', path: string): void
   (e: 'refresh'): void
   (e: 'renamed', payload: { oldPath: string; newPath: string }): void
+  (e: 'createFile', dirRelPath: string): void
+  (e: 'createFolder', dirRelPath: string): void
+  (e: 'delete', payload: { relPath: string; isDirectory: boolean }): void
 }>()
 
 const contextMenu = reactive<{
@@ -157,20 +184,55 @@ function openFileLocation() {
   closeContextMenu()
 }
 
+// 在当前文件夹节点下新建文件
+function createFileInFolder() {
+  if (contextMenu.node) {
+    emit('createFile', contextMenu.node.path)
+  }
+  closeContextMenu()
+}
+
+// 在当前文件夹节点下新建文件夹
+function createFolderInFolder() {
+  if (contextMenu.node) {
+    emit('createFolder', contextMenu.node.path)
+  }
+  closeContextMenu()
+}
+
+// 删除当前文件或文件夹
+function deleteNode() {
+  if (contextMenu.node) {
+    emit('delete', { relPath: contextMenu.node.path, isDirectory: contextMenu.node.isDirectory })
+  }
+  closeContextMenu()
+}
+
 const renamingPath = ref<string | null>(null)
 const renameValue = ref('')
 const renameInputEl = ref<HTMLInputElement | null>(null)
 
 function startRename(node: FileNode | null) {
   if (!node) return
+  console.log('[FolderTree] startRename:', node.path)
   renamingPath.value = node.path
   renameValue.value = node.name
   contextMenu.visible = false
   contextMenu.node = null
-  nextTick(() => {
-    renameInputEl.value?.focus()
-    renameInputEl.value?.select()
-  })
+  const focusRenameInput = () => {
+    if (renameInputEl.value) {
+      renameInputEl.value.scrollIntoView({ block: 'nearest' })
+      renameInputEl.value.focus()
+      renameInputEl.value.select()
+    }
+  }
+  nextTick(focusRenameInput)
+  // 兜底：延时再次聚焦，确保输入框真正获得焦点（如新建文件等异步流程后）
+  setTimeout(() => {
+    if (renamingPath.value === node.path) {
+      focusRenameInput()
+    }
+  }, 80)
 }
 
 async function confirmRename(node: FileNode) {
@@ -192,6 +254,30 @@ async function confirmRename(node: FileNode) {
 function cancelRename() {
   renamingPath.value = null
 }
+
+// 外部请求进入行内重命名（新建文件后编辑文件名）
+// immediate：嵌套目录的 FolderTree 实例可能在请求设置之后才挂载，挂载时需立即处理
+watch(
+  () => props.renameRequest,
+  (req) => {
+    if (!req) return
+    // 仅当该节点属于当前实例的直接子级时才进入重命名（渲染该节点的实例才会生效）
+    const node = props.nodes.find((n) => n.path === req.path)
+    console.log('[FolderTree] renameRequest:', req.path, 'directChild:', !!node, 'nodes:', props.nodes.length)
+    if (node) {
+      startRename(node)
+    } else {
+      // 树刚刷新，节点可能尚未渲染，下一帧再尝试一次
+      nextTick(() => {
+        if (!props.renameRequest || props.renameRequest.version !== req.version) return
+        const retryNode = props.nodes.find((n) => n.path === req.path)
+        console.log('[FolderTree] renameRequest retry:', req.path, 'found:', !!retryNode)
+        if (retryNode) startRename(retryNode)
+      })
+    }
+  },
+  { immediate: true }
+)
 
 function onClickOutside() {
   closeContextMenu()
@@ -376,6 +462,20 @@ function handleDirectoryClick(node: FileNode) {
 
 .context-menu-item:hover {
   background: var(--bg-tertiary);
+}
+
+.context-menu-item.danger {
+  color: #e81123;
+}
+
+.context-menu-item.danger:hover {
+  background: rgba(232, 17, 35, 0.12);
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 6px;
 }
 
 .context-menu-icon {
