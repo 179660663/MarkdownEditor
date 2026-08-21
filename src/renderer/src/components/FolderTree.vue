@@ -277,23 +277,23 @@ function handleDirectoryClick(node: FileNode) {
   z-index: 9999;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  padding: 4px 0;
-  min-width: 160px;
-  font-size: 13px;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  padding: 3px 0;
+  min-width: 140px;
+  font-size: 11px;
   color: var(--text-primary);
 }
 
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 6px;
+  padding: 4px 10px;
   cursor: pointer;
   transition: background 0.1s;
-  border-radius: 4px;
-  margin: 0 4px;
+  border-radius: 3px;
+  margin: 0 3px;
 }
 
 .context-menu-item:hover {
@@ -301,8 +301,8 @@ function handleDirectoryClick(node: FileNode) {
 }
 
 .context-menu-icon {
-  font-size: 14px;
-  width: 18px;
+  font-size: 13px;
+  width: 16px;
   text-align: center;
 }
 </style>

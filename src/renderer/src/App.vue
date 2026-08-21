@@ -284,14 +284,14 @@
         </div>
 
         <div
-          v-if="showOutline"
+          v-if="showOutline && store.activeTabId"
           class="resize-handle resize-handle-vertical"
           :style="outlinePosition === 'left' ? 'order: 2' : 'order: 2'"
           @mousedown="startResize('outline', $event)"
         ></div>
 
         <OutlineSidebar
-          v-if="showOutline"
+          v-if="showOutline && store.activeTabId"
           ref="outlineRef"
           class="outline-sidebar"
           :class="{ 'outline-sidebar-left': outlinePosition === 'left' }"
@@ -302,7 +302,7 @@
           @close="showOutline = false"
         />
         <button
-          v-if="!showOutline"
+          v-if="!showOutline && store.activeTabId"
           class="outline-toggle"
           :class="{ 'outline-toggle-left': outlinePosition === 'left' }"
           title="显示大纲"
@@ -311,6 +311,7 @@
           大纲
         </button>
         <button
+          v-if="store.activeTabId"
           class="outline-position-toggle"
           :title="outlinePosition === 'left' ? '切换大纲到右侧' : '切换大纲到左侧'"
           @click="toggleOutlinePosition"
@@ -321,6 +322,7 @@
     </main>
 
     <StatusBar
+      v-if="store.activeTabId"
       :content="currentDoc.content"
       :file-name="statusFileName"
       :is-dirty="store.isDirty"
@@ -1632,23 +1634,23 @@ onUnmounted(() => {
   z-index: 9999;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  padding: 4px 0;
-  min-width: 160px;
-  font-size: 13px;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  padding: 3px 0;
+  min-width: 140px;
+  font-size: 11px;
   color: var(--text-primary);
 }
 
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 6px;
+  padding: 4px 10px;
   cursor: pointer;
   transition: background 0.1s;
-  border-radius: 4px;
-  margin: 0 4px;
+  border-radius: 3px;
+  margin: 0 3px;
 }
 
 .context-menu-item:hover {
@@ -1656,8 +1658,8 @@ onUnmounted(() => {
 }
 
 .context-menu-icon {
-  font-size: 14px;
-  width: 18px;
+  font-size: 13px;
+  width: 16px;
   text-align: center;
 }
 </style>

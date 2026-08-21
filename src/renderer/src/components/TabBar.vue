@@ -244,16 +244,16 @@ onBeforeUnmount(() => {
   position: fixed;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  padding: 4px 0;
-  min-width: 120px;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  padding: 3px 0;
+  min-width: 100px;
   z-index: 3000;
 }
 
 .context-item {
-  padding: 8px 14px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
   color: var(--text-primary);
   cursor: pointer;
   transition: background 0.15s;

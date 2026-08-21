@@ -20,7 +20,8 @@
       {
         "provider": "github",
         "owner": "179660663",
-        "repo": "MarkdownEditor"
+        "repo": "MarkdownEditor",
+        "releaseType": "release"
       }
     ],
     "win": {
